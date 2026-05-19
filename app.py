@@ -599,11 +599,16 @@ def export_workflow():
     data = request.get_json()
     folder = data.get("folder")
     filename = data.get("filename")
+    subfolder = data.get("subfolder", "")
 
     if not folder or not filename:
         return jsonify({"error": "Missing folder or filename"}), 400
 
-    img_path = ROOT / folder / filename
+    folder_path = ROOT / folder
+    if subfolder:
+        img_path = folder_path / subfolder / filename
+    else:
+        img_path = folder_path / filename
     if not img_path.exists():
         return jsonify({"error": "Image not found"}), 404
 
