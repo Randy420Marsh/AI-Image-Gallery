@@ -604,11 +604,23 @@ def export_workflow():
     if not folder or not filename:
         return jsonify({"error": "Missing folder or filename"}), 400
 
+    config = load_config()
+    allowed_folders = [
+        f if isinstance(f, str) else f.get("name", "")
+        for f in config.get("folders", [])
+    ]
+    if folder not in allowed_folders:
+        return jsonify({"error": "Invalid folder"}), 403
+
     folder_path = ROOT / folder
     if subfolder:
         img_path = folder_path / subfolder / filename
     else:
         img_path = folder_path / filename
+
+    if not img_path.resolve().is_relative_to(folder_path.resolve()):
+        return jsonify({"error": "Invalid path"}), 403
+
     if not img_path.exists():
         return jsonify({"error": "Image not found"}), 404
 
@@ -665,8 +677,8 @@ def export_workflow():
                 }
             })
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        return jsonify({"error": "Failed to process image"}), 500
 
 
 if __name__ == "__main__":
