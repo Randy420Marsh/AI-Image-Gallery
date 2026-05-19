@@ -3,7 +3,6 @@ from pathlib import Path
 from flask import Flask, jsonify, send_from_directory, make_response, abort, request
 import os
 import sqlite3
-import hashlib
 import xxhash
 from datetime import datetime
 import threading
@@ -557,7 +556,11 @@ def search_metadata():
 
     for img in images:
         folder_path = ROOT / img["folder"]
-        img_path = folder_path / img["filename"]
+        subfolder = img.get("subfolder", "")
+        if subfolder:
+            img_path = folder_path / subfolder / img["filename"]
+        else:
+            img_path = folder_path / img["filename"]
 
         if not img_path.exists():
             continue
@@ -639,10 +642,11 @@ def export_workflow():
                         cfg = str(inp["cfg"])
                     if "steps" in inp:
                         steps = str(inp["steps"])
-                    break
+                    if seed != "unknown" and sampler != "unknown":
+                        break
 
             base_name = Path(filename).stem
-            export_filename = f"{seed}_{base_name}_{sampler}_{cfg}_{steps}.json"
+            export_filename = f"{seed}_{base_name}_{sampler}_{cfg}_{steps}"
             export_filename = "".join(c for c in export_filename if c.isalnum() or c in "._-") + ".json"
 
             return jsonify({
