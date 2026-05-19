@@ -56,18 +56,36 @@ Enable `recursive: true` on the folder to pick up subfolder images.
 - The filename format is `{seed}_{imagename}_{sampler}_{cfg}_{steps}.json`
 - Fields may show "unknown" if the workflow doesn't contain those values
 
-### 4. Filtered Export Correctness
+### 4. Subfolder Export Workflow
+- Open a **subfolder** image in lightbox, click "Export JSON"
+- Verify export succeeds (not 404 "Image not found")
+- The frontend sends `subfolder` in the request body; the backend uses it to construct the correct file path
+- Bug pattern: `export_workflow` constructs path as `ROOT/folder/filename` without subfolder — same fix needed as `search_metadata`
+- Quick API verification:
+  ```bash
+  # Should succeed (200)
+  curl -X POST http://127.0.0.1:8888/api/export/workflow \
+    -H "Content-Type: application/json" \
+    -d '{"folder":"images","subfolder":"subfolder","filename":"ComfyUI_subfolder_test.png"}'
+  # Should fail (404) — proves subfolder param is needed
+  curl -X POST http://127.0.0.1:8888/api/export/workflow \
+    -H "Content-Type: application/json" \
+    -d '{"folder":"images","filename":"ComfyUI_subfolder_test.png"}'
+  ```
+
+### 5. Filtered Export Correctness
 - Type a partial filename in "Filter filename..." to show a subset of images
 - Open one of the filtered images in lightbox and export
 - Verify the exported filename matches the **visible** image, not some other image from the full unfiltered list
 - Bug pattern: code uses `allImages[currentIndex]` instead of `currentImages[currentIndex]`
+- Also check the `exportWorkflow` guard: should be `if (!currentImages[currentIndex]) return;` not `if (!allImages[currentIndex]) return;`
 
-### 5. Subfolder Metadata Search
+### 6. Subfolder Metadata Search
 - With recursive enabled, use "Search prompts..." to search metadata
 - Verify subfolder images are found and no server 500 errors occur
 - Check Flask server console for errors — subfolder path resolution bugs cause FileNotFoundError
 
-### 6. Lightbox & AI Info
+### 7. Lightbox & AI Info
 - Click any image to open lightbox
 - Verify positive/negative prompt, generation settings (Steps, CFG, Sampler, Scheduler, Seed) display correctly
 - Navigate between images with arrow buttons
@@ -83,9 +101,13 @@ curl http://127.0.0.1:8888/api/images
 curl -X POST http://127.0.0.1:8888/api/metadata/search \
   -H "Content-Type: application/json" -d '{"query":"portrait"}'
 
-# Export workflow
+# Export workflow (root image)
 curl -X POST http://127.0.0.1:8888/api/export/workflow \
   -H "Content-Type: application/json" -d '{"folder":"images","filename":"ComfyUI_02459_.png"}'
+
+# Export workflow (subfolder image — must include subfolder param)
+curl -X POST http://127.0.0.1:8888/api/export/workflow \
+  -H "Content-Type: application/json" -d '{"folder":"images","subfolder":"subfolder","filename":"ComfyUI_subfolder_test.png"}'
 
 # Cache status
 curl http://127.0.0.1:8888/api/thumbnails/status
@@ -96,3 +118,4 @@ curl http://127.0.0.1:8888/api/thumbnails/status
 - **403 errors on subfolder thumbnails**: May be caused by truncated URLs in the DOM — check if the full path resolves correctly
 - **Search returns no results**: The search checks PNG tEXt/iTXt chunks for ComfyUI metadata — JPEG/WebP use EXIF. Ensure test images have embedded metadata.
 - **Server shows "0 images"**: Check folder config — the default `comfy_images` folder might not exist. Use the API or UI to add the correct folder.
+- **Subfolder export returns 404**: Ensure the frontend sends `subfolder` in the request body and the backend includes it in the path construction. Both `search_metadata` and `export_workflow` need subfolder handling.
