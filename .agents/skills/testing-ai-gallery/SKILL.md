@@ -80,12 +80,33 @@ Enable `recursive: true` on the folder to pick up subfolder images.
 - Bug pattern: code uses `allImages[currentIndex]` instead of `currentImages[currentIndex]`
 - Also check the `exportWorkflow` guard: should be `if (!currentImages[currentIndex]) return;` not `if (!allImages[currentIndex]) return;`
 
-### 6. Subfolder Metadata Search
+### 6. Security: Path Traversal Protection
+- The `export_workflow` endpoint accepts user-controlled `folder`, `subfolder`, and `filename` params
+- Verify folder is validated against the config allowlist (same as `images_from_folder`)
+- Verify path traversal via `../` in any parameter returns 403, not 404/500
+- Verify error messages don't leak filesystem paths
+- Quick security test:
+  ```bash
+  # Traversal via subfolder — should return 403 "Invalid path"
+  curl -s -X POST http://127.0.0.1:8888/api/export/workflow \
+    -H "Content-Type: application/json" \
+    -d '{"folder":"images","subfolder":"../../..","filename":"passwd"}'
+  # Invalid folder — should return 403 "Invalid folder"
+  curl -s -X POST http://127.0.0.1:8888/api/export/workflow \
+    -H "Content-Type: application/json" \
+    -d '{"folder":"etc","filename":"passwd"}'
+  # Traversal via filename — should return 403 "Invalid path"
+  curl -s -X POST http://127.0.0.1:8888/api/export/workflow \
+    -H "Content-Type: application/json" \
+    -d '{"folder":"images","filename":"../../../etc/passwd"}'
+  ```
+
+### 7. Subfolder Metadata Search
 - With recursive enabled, use "Search prompts..." to search metadata
 - Verify subfolder images are found and no server 500 errors occur
 - Check Flask server console for errors — subfolder path resolution bugs cause FileNotFoundError
 
-### 7. Lightbox & AI Info
+### 8. Lightbox & AI Info
 - Click any image to open lightbox
 - Verify positive/negative prompt, generation settings (Steps, CFG, Sampler, Scheduler, Seed) display correctly
 - Navigate between images with arrow buttons
@@ -119,3 +140,4 @@ curl http://127.0.0.1:8888/api/thumbnails/status
 - **Search returns no results**: The search checks PNG tEXt/iTXt chunks for ComfyUI metadata — JPEG/WebP use EXIF. Ensure test images have embedded metadata.
 - **Server shows "0 images"**: Check folder config — the default `comfy_images` folder might not exist. Use the API or UI to add the correct folder.
 - **Subfolder export returns 404**: Ensure the frontend sends `subfolder` in the request body and the backend includes it in the path construction. Both `search_metadata` and `export_workflow` need subfolder handling.
+- **Path traversal returns 200/500 instead of 403**: Check that `export_workflow` validates folder against config allowlist and uses `resolve().is_relative_to()` to block `../` traversal.
