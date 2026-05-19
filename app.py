@@ -23,6 +23,21 @@ app = Flask(__name__, static_folder=None)
 # Config file for folder management
 CONFIG_FILE = ROOT / "gallery_config.json"
 
+# ── Thread-safe SQLite helpers ────────────────────────────────────────────────
+# A single write lock serialises all INSERT/UPDATE operations at the Python
+# level.  Combined with WAL mode (set at init) and a generous connect timeout,
+# this eliminates "database is locked" errors under concurrent Flask workers.
+_db_write_lock = threading.Lock()
+
+
+def _get_conn(timeout: float = 30) -> sqlite3.Connection:
+    """Return a new connection with sensible thread-safe defaults."""
+    conn = sqlite3.connect(DB_FILE, timeout=timeout, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")   # concurrent reads + serialised writes
+    conn.execute("PRAGMA synchronous=NORMAL") # good durability, faster than FULL
+    conn.execute("PRAGMA busy_timeout=30000") # ms – wait instead of raising immediately
+    return conn
+
 # Default config
 DEFAULT_CONFIG = {
     "folders": [
@@ -58,27 +73,28 @@ def init_cache_db():
     CACHE_DIR.mkdir(exist_ok=True)
     THUMBNAIL_DIR.mkdir(exist_ok=True)
 
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS images (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_path TEXT UNIQUE NOT NULL,
-            xxhash TEXT NOT NULL,
-            size INTEGER,
-            width INTEGER,
-            height INTEGER,
-            mtime REAL,
-            thumbnail_created INTEGER DEFAULT 0,
-            thumbnail_path TEXT,
-            added_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON images(file_path)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_xxhash ON images(xxhash)')
-    conn.commit()
-    conn.close()
+    with _db_write_lock:
+        conn = _get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT UNIQUE NOT NULL,
+                xxhash TEXT NOT NULL,
+                size INTEGER,
+                width INTEGER,
+                height INTEGER,
+                mtime REAL,
+                thumbnail_created INTEGER DEFAULT 0,
+                thumbnail_path TEXT,
+                added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON images(file_path)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_xxhash ON images(xxhash)')
+        conn.commit()
+        conn.close()
 
 
 def get_file_xxhash(file_path):
@@ -116,36 +132,40 @@ def update_or_create_image_record(file_path):
         thumbnail_name = f"{xxh}.webp"
         thumbnail_path = THUMBNAIL_DIR / thumbnail_name
 
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-
-        # Check if record exists and if it needs updating
-        cursor.execute('SELECT xxhash, thumbnail_created FROM images WHERE file_path = ?', (str(file_path),))
-        row = cursor.fetchone()
-
         needs_thumbnail = False
 
-        if row:
-            stored_xxhash, thumbnail_created = row
-            # Update if hash changed or thumbnail doesn't exist
-            if stored_xxhash != xxh or not thumbnail_path.exists():
-                cursor.execute('''
-                    UPDATE images SET
-                        xxhash = ?, size = ?, width = ?, height = ?, mtime = ?,
-                        thumbnail_created = 0, thumbnail_path = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE file_path = ?
-                ''', (xxh, size, width, height, mtime, str(thumbnail_path), str(file_path)))
-                needs_thumbnail = True
-        else:
-            # Create new record
-            cursor.execute('''
-                INSERT INTO images (file_path, xxhash, size, width, height, mtime, thumbnail_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (str(file_path), xxh, size, width, height, mtime, str(thumbnail_path)))
-            needs_thumbnail = True
+        with _db_write_lock:
+            conn = _get_conn()
+            try:
+                cursor = conn.cursor()
 
-        conn.commit()
-        conn.close()
+                # Check if record exists and if it needs updating
+                cursor.execute('SELECT xxhash, thumbnail_created FROM images WHERE file_path = ?', (str(file_path),))
+                row = cursor.fetchone()
+
+                if row:
+                    stored_xxhash, thumbnail_created = row
+                    # Update if hash changed or thumbnail doesn't exist
+                    if stored_xxhash != xxh or not thumbnail_path.exists():
+                        cursor.execute('''
+                            UPDATE images SET
+                                xxhash = ?, size = ?, width = ?, height = ?, mtime = ?,
+                                thumbnail_created = 0, thumbnail_path = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE file_path = ?
+                        ''', (xxh, size, width, height, mtime, str(thumbnail_path), str(file_path)))
+                        needs_thumbnail = True
+                else:
+                    # Create new record
+                    cursor.execute('''
+                        INSERT INTO images (file_path, xxhash, size, width, height, mtime, thumbnail_path)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (str(file_path), xxh, size, width, height, mtime, str(thumbnail_path)))
+                    needs_thumbnail = True
+
+                conn.commit()
+            finally:
+                conn.close()
+
         return needs_thumbnail
 
     except Exception as e:
@@ -178,11 +198,14 @@ def generate_thumbnail(file_path, thumbnail_path, size=THUMBNAIL_SIZE):
 def mark_thumbnail_created(file_path):
     """Mark thumbnail as created in cache."""
     try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('UPDATE images SET thumbnail_created = 1, updated_at = CURRENT_TIMESTAMP WHERE file_path = ?', (str(file_path),))
-        conn.commit()
-        conn.close()
+        with _db_write_lock:
+            conn = _get_conn()
+            try:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE images SET thumbnail_created = 1, updated_at = CURRENT_TIMESTAMP WHERE file_path = ?', (str(file_path),))
+                conn.commit()
+            finally:
+                conn.close()
     except Exception as e:
         print(f"Error marking thumbnail created: {e}")
 
@@ -190,11 +213,14 @@ def mark_thumbnail_created(file_path):
 def get_thumbnail_path(file_path):
     """Get thumbnail path for an image, or None if not cached."""
     try:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute('SELECT thumbnail_path, thumbnail_created FROM images WHERE file_path = ?', (str(file_path),))
-        row = cursor.fetchone()
-        conn.close()
+        # Reads don't need the write lock; WAL mode allows concurrent readers.
+        conn = _get_conn()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT thumbnail_path, thumbnail_created FROM images WHERE file_path = ?', (str(file_path),))
+            row = cursor.fetchone()
+        finally:
+            conn.close()
 
         if row:
             thumbnail_path, thumbnail_created = row
@@ -206,33 +232,55 @@ def get_thumbnail_path(file_path):
 
 
 # Background thread for thumbnail generation
-thumbnail_queue = []
-thumbnail_lock = threading.Lock()
+# Use queue.Queue instead of a plain list so put/get are inherently thread-safe.
+import queue as _queue
+thumbnail_queue = _queue.Queue()
+thumbnail_lock = threading.Lock()  # kept for API compatibility
 
-def process_thumbnail_queue():
-    """Background worker to generate thumbnails."""
+_thumbnail_worker_started = False
+_thumbnail_worker_lock = threading.Lock()
+
+
+def _thumbnail_worker():
+    """Persistent daemon that drains thumbnail_queue in the background."""
     while True:
-        with thumbnail_lock:
-            if not thumbnail_queue:
-                break
-
-            file_path = thumbnail_queue.pop(0)
+        try:
+            file_path = thumbnail_queue.get(timeout=5)
+        except _queue.Empty:
+            continue
 
         try:
             needs_thumbnail = update_or_create_image_record(file_path)
             if needs_thumbnail:
                 xxh = get_file_xxhash(file_path)
-                thumbnail_path = THUMBNAIL_DIR / f"{xxh}.webp"
-                if generate_thumbnail(file_path, thumbnail_path):
+                thumb_path = THUMBNAIL_DIR / f"{xxh}.webp"
+                if generate_thumbnail(file_path, thumb_path):
                     mark_thumbnail_created(file_path)
         except Exception as e:
             print(f"Error processing thumbnail for {file_path}: {e}")
+        finally:
+            thumbnail_queue.task_done()
 
+
+def _ensure_thumbnail_worker():
+    """Start the background thumbnail worker exactly once."""
+    global _thumbnail_worker_started
+    with _thumbnail_worker_lock:
+        if not _thumbnail_worker_started:
+            t = threading.Thread(target=_thumbnail_worker, daemon=True, name="thumbnail-worker")
+            t.start()
+            _thumbnail_worker_started = True
+
+
+def process_thumbnail_queue():
+    """Enqueue all pending thumbnail work and return immediately (non-blocking)."""
+    _ensure_thumbnail_worker()
     return True
 
 
 # Initialize cache on module load
 init_cache_db()
+_ensure_thumbnail_worker()
 
 
 @app.route("/")
@@ -326,7 +374,7 @@ def generate_thumbnails():
 @app.route("/api/thumbnails/status")
 def thumbnails_status():
     """Get thumbnail generation status."""
-    conn = sqlite3.connect(DB_FILE)
+    conn = _get_conn()
     cursor = conn.cursor()
 
     cursor.execute('SELECT COUNT(*) FROM images')
@@ -406,45 +454,32 @@ def _scan_images():
         if not folder_path.exists() or not folder_path.is_dir():
             continue
 
-        if recursive:
-            for p in sorted(folder_path.rglob("*")):
-                if p.is_file() and p.suffix.lower() in ALLOWED:
-                    st = p.stat()
-                    rel_path = p.relative_to(folder_path)
+        files = (
+            (p for p in sorted(folder_path.rglob("*")) if p.is_file() and p.suffix.lower() in ALLOWED)
+            if recursive
+            else (p for p in sorted(folder_path.iterdir()) if p.is_file() and p.suffix.lower() in ALLOWED)
+        )
 
-                    # Update/create cache record and get thumbnail info
-                    update_or_create_image_record(str(p))
-                    thumb_path = get_thumbnail_path(str(p))
-                    thumb_xxhash = Path(thumb_path).stem if thumb_path else None
+        for p in files:
+            st = p.stat()
+            rel_path = p.relative_to(folder_path)
 
-                    out.append({
-                        "path": f"images/{folder_name}/{rel_path}",
-                        "folder": folder_name,
-                        "subfolder": str(rel_path.parent) if rel_path.parent != Path('.') else "",
-                        "filename": p.name,
-                        "size": st.st_size,
-                        "mtime": int(st.st_mtime),
-                        "thumbnail": f"/thumbnail/{thumb_xxhash}" if thumb_xxhash else None,
-                    })
-        else:
-            for p in sorted(folder_path.iterdir()):
-                if p.is_file() and p.suffix.lower() in ALLOWED:
-                    st = p.stat()
+            # Cheaply check the cache; enqueue background generation if missing
+            thumb_path = get_thumbnail_path(str(p))
+            if thumb_path is None:
+                thumbnail_queue.put(str(p))
+            thumb_xxhash = Path(thumb_path).stem if thumb_path else None
 
-                    # Update/create cache record and get thumbnail info
-                    update_or_create_image_record(str(p))
-                    thumb_path = get_thumbnail_path(str(p))
-                    thumb_xxhash = Path(thumb_path).stem if thumb_path else None
+            out.append({
+                "path": f"images/{folder_name}/{rel_path}",
+                "folder": folder_name,
+                "subfolder": str(rel_path.parent) if rel_path.parent != Path('.') else "",
+                "filename": p.name,
+                "size": st.st_size,
+                "mtime": int(st.st_mtime),
+                "thumbnail": f"/thumbnail/{thumb_xxhash}" if thumb_xxhash else None,
+            })
 
-                    out.append({
-                        "path": f"images/{folder_name}/{p.name}",
-                        "folder": folder_name,
-                        "subfolder": "",
-                        "filename": p.name,
-                        "size": st.st_size,
-                        "mtime": int(st.st_mtime),
-                        "thumbnail": f"/thumbnail/{thumb_xxhash}" if thumb_xxhash else None,
-                    })
     return out
 
 
