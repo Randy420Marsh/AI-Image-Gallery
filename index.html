@@ -1,0 +1,1940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Gallery Pro</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --border: #334155;
+            --glass: rgba(15, 23, 42, 0.9);
+            --positive: #10b981;
+            --negative: #ef4444;
+            --grid-size-small: 150px;
+            --grid-size-medium: 250px;
+            --grid-size-large: 350px;
+            --grid-size: var(--grid-size-medium);
+        }
+        [data-theme="light"] {
+            --bg: #f8f9fa;
+            --card-bg: #ffffff;
+            --text: #1a1a1a;
+            --text-muted: #64748b;
+            --accent: #2563eb;
+            --border: #e2e8f0;
+            --glass: rgba(255, 255, 255, 0.9);
+        }
+        * { box-sizing: border-box; transition: background-color 0.2s, color 0.2s; }
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            overflow-x: hidden;
+        }
+        header {
+            position: sticky; top: 0; z-index: 100;
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            padding: 0.75rem 1.5rem;
+        }
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .header-left h2 {
+            margin: 0;
+            font-size: 1.25rem;
+            white-space: nowrap;
+        }
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .control-group label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-right: 0.25rem;
+        }
+        .btn {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .btn:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+        .btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+        .btn-icon {
+            padding: 0.5rem;
+            font-size: 1rem;
+        }
+        .search-bar {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            border-radius: 99px;
+            color: var(--text);
+            width: 200px;
+        }
+        .search-bar:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .search-meta {
+            width: 250px;
+            border-color: var(--accent);
+        }
+
+        /* Gallery Views */
+        .gallery {
+            padding: 2rem;
+            max-width: 100%;
+            margin: 0 auto;
+        }
+        .gallery.grid-view {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(var(--grid-size), 1fr));
+            gap: 1rem;
+        }
+        .gallery.list-view {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Grid Item */
+        .item {
+            background: var(--card-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            position: relative;
+            transition: transform 0.15s, border-color 0.15s;
+        }
+        .item:hover { transform: translateY(-4px); border-color: var(--accent); }
+        .item img { width: 100%; height: 200px; object-fit: cover; display: block; }
+        .item-info { padding: 0.75rem; font-size: 0.85rem; font-weight: 500; text-align: center; }
+
+        /* List Item */
+        .gallery.list-view .item {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem;
+            gap: 1rem;
+        }
+        .gallery.list-view .item:hover { transform: translateX(4px); }
+        .gallery.list-view .item img {
+            width: 100px;
+            height: 100px;
+            flex-shrink: 0;
+        }
+        .gallery.list-view .item-info {
+            flex: 1;
+            text-align: left;
+        }
+        .gallery.list-view .item-folder {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Folder Management Menu */
+        .folder-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem;
+            min-width: 300px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            display: none;
+            z-index: 200;
+        }
+        .folder-menu.open { display: block; }
+        .folder-menu-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 0.5rem;
+        }
+        .folder-menu-header h4 {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+        .folder-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .folder-tab {
+            flex: 1;
+            padding: 0.4rem;
+            text-align: center;
+            font-size: 0.8rem;
+            border-radius: 4px;
+            cursor: pointer;
+            background: var(--bg);
+            color: var(--text-muted);
+        }
+        .folder-tab.active {
+            background: var(--accent);
+            color: white;
+        }
+        .folder-list {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 0.5rem;
+        }
+        .folder-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .folder-item:hover { background: var(--bg); }
+        .folder-item.active {
+            background: var(--accent);
+            color: white;
+        }
+        .folder-item-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .folder-item-name {
+            font-size: 0.85rem;
+        }
+        .folder-item-subfolder {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+        .folder-item-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .recursive-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.7rem;
+        }
+        .recursive-toggle input {
+            margin: 0;
+        }
+        .folder-remove {
+            opacity: 0.5;
+            font-size: 1.2rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+        .folder-remove:hover { opacity: 1; }
+        .folder-available {
+            max-height: 150px;
+            overflow-y: auto;
+            border-top: 1px solid var(--border);
+            padding-top: 0.5rem;
+        }
+        .folder-available-item {
+            padding: 0.5rem;
+            cursor: pointer;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .folder-available-item:hover { color: var(--accent); }
+        .folder-available-item button {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .folder-available-item button:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+        /* Folder Tree View */
+        .folder-tree-container {
+            display: none;
+        }
+        .folder-tree-container.active { display: block; }
+        .folder-tree-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .folder-tree-header select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        .folder-tree {
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
+        .tree-item {
+            padding: 0.25rem 0.5rem;
+            cursor: pointer;
+            font-size: 0.85rem;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .tree-item:hover { background: var(--bg); }
+        .tree-item.selected { background: var(--accent); color: white; }
+        .tree-item .folder-icon { color: var(--text-muted); }
+        .tree-item.selected .folder-icon { color: white; }
+        .tree-indent { padding-left: 1rem; }
+        .tree-item-folder { font-weight: 600; }
+        .tree-item-file { color: var(--text-muted); }
+        .tree-item.selected .tree-item-file { color: white; }
+
+        /* Cache Stats */
+        .cache-stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+            font-size: 0.8rem;
+        }
+        .cache-stat-label { color: var(--text-muted); }
+        .cache-stat-value { font-weight: 600; }
+
+        /* Lightbox Modal */
+        #lightbox-modal {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            transition: opacity 0.3s ease;
+            opacity: 1;
+        }
+        #lightbox-modal.closed {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .modal-content {
+            width: 100%; height: 100%;
+            max-width: 95vw; max-height: 95vh;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+        .preview-pane {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        #modalImg {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            will-change: transform;
+            touch-action: none;
+            cursor: grab;
+        }
+        #modalImg.grabbing { cursor: grabbing; }
+        .nav-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            border: 2px solid white;
+            font-size: 2em;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s, transform 0.2s;
+            z-index: 502;
+        }
+        .nav-btn:hover {
+            background-color: rgba(0, 0, 0, 0.8);
+            transform: translateY(-50%) scale(1.1);
+        }
+        .left-btn { left: 20px; }
+        .right-btn { right: 20px; }
+        .play-btn {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 1.2em;
+            width: 60px;
+            height: 60px;
+            z-index: 503;
+        }
+        .play-btn:hover {
+            transform: translateX(-50%) scale(1.1);
+        }
+        .close-modal {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            font-size: 3rem;
+            color: white;
+            cursor: pointer;
+            z-index: 504;
+            line-height: 1;
+            background: none;
+            border: none;
+            transition: color 0.2s;
+        }
+        .close-modal:hover { color: #ffdd57; }
+
+        /* Export Button */
+        .export-btn {
+            position: absolute;
+            top: 20px;
+            left: 90px;
+            background: var(--positive);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            z-index: 505;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .export-btn:hover { background: #059669; }
+        .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* AI Info Panel */
+        .info-panel-toggle {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            z-index: 505;
+            transition: transform 0.2s;
+        }
+        .info-panel-toggle:hover { transform: scale(1.05); }
+        .info-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 450px;
+            height: 100%;
+            background: var(--card-bg);
+            border-right: 1px solid var(--border);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            z-index: 501;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .info-panel.open { transform: translateX(0); }
+        .info-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .info-header h3 { margin: 0; font-size: 1rem; word-break: break-all; }
+        .close-panel {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+        .tabs {
+            display: flex;
+            background: var(--bg);
+            padding: 0.25rem;
+            gap: 0.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .tab {
+            flex: 1;
+            padding: 0.5rem;
+            text-align: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 6px;
+            color: var(--text-muted);
+        }
+        .tab.active { background: var(--card-bg); color: var(--accent); }
+        .info-body { flex: 1; overflow-y: auto; padding: 1.5rem; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .tag {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--accent);
+            color: white;
+            margin-bottom: 0.5rem;
+            display: inline-block;
+        }
+        .prompt-section { margin-bottom: 1.5rem; }
+        .prompt-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .prompt-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 0.75rem;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.8rem;
+            line-height: 1.4;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .raw-box {
+            background: #000;
+            color: #10b981;
+            border: 1px solid var(--border);
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.75rem;
+            line-height: 1.4;
+            overflow: auto;
+            white-space: pre;
+            height: 100%;
+            max-height: 60vh;
+        }
+        .copy-btn {
+            cursor: pointer;
+            color: var(--accent);
+            font-size: 0.7rem;
+            border: 1px solid var(--border);
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--bg);
+        }
+        .copy-btn:hover { background: var(--border); }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        .setting-item {
+            background: var(--bg);
+            padding: 0.5rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+        .setting-key { font-size: 0.65rem; color: var(--text-muted); display: block; }
+        .setting-val { font-size: 0.8rem; font-weight: 600; }
+        .image-counter {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            z-index: 502;
+        }
+        #galleryError { display: none; text-align: center; padding: 4rem; color: var(--text-muted); }
+        .gallery-stats {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        @media (max-width: 900px) {
+            .header-content { flex-direction: column; align-items: stretch; }
+            .header-left { justify-content: space-between; }
+            .header-controls { justify-content: space-between; }
+            .info-panel { width: 100%; }
+        }
+        @media (max-width: 600px) {
+            .nav-btn { width: 45px; height: 45px; font-size: 1.8em; }
+            .left-btn { left: 10px; }
+            .right-btn { right: 10px; }
+            .play-btn { bottom: 20px; width: 50px; height: 50px; }
+            .export-btn { left: auto; right: 90px; top: 20px; }
+        }
+    </style>
+</head>
+<body data-theme="dark">
+
+<header>
+    <div class="header-content">
+        <div class="header-left">
+            <h2>AI Gallery Pro</h2>
+            <button class="btn btn-icon" id="themeToggle" title="Toggle theme">🌓</button>
+            <button class="btn btn-icon" id="cacheStatus" title="Cache Status">📊</button>
+        </div>
+        <div class="header-controls">
+            <div class="control-group">
+                <label>View:</label>
+                <button class="btn active" id="viewGrid" title="Grid View">⊞</button>
+                <button class="btn" id="viewList" title="List View">☰</button>
+            </div>
+            <div class="control-group">
+                <label>Size:</label>
+                <button class="btn" id="sizeSmall" title="Small">S</button>
+                <button class="btn active" id="sizeMedium" title="Medium">M</button>
+                <button class="btn" id="sizeLarge" title="Large">L</button>
+            </div>
+            <div class="control-group relative">
+                <button class="btn" id="folderBtn" title="Manage Folders">📁 Folders</button>
+                <div class="folder-menu" id="folderMenu">
+                    <div class="folder-tabs">
+                        <div class="folder-tab active" data-tab="list">List View</div>
+                        <div class="folder-tab" data-tab="tree">Tree View</div>
+                    </div>
+
+                    <!-- List View Tab -->
+                    <div class="folder-list-view">
+                        <div class="folder-menu-header">
+                            <h4>Gallery Folders</h4>
+                            <button class="btn btn-icon" id="refreshFolders" title="Refresh">↻</button>
+                        </div>
+                        <div class="folder-list" id="activeFolders"></div>
+                        <div class="folder-available">
+                            <div style="font-size:0.75rem;color:var(--text-muted);padding:0.5rem;">Available to add:</div>
+                            <div id="availableFolders"></div>
+                        </div>
+                    </div>
+
+                    <!-- Tree View Tab -->
+                    <div class="folder-tree-container">
+                        <div class="folder-tree-header">
+                            <h4>Browse Folders</h4>
+                            <select id="folderTreeSelect"></select>
+                        </div>
+                        <div class="folder-tree" id="folderTree"></div>
+                        <div style="padding:0.5rem;border-top:1px solid var(--border);">
+                            <label style="font-size:0.75rem;display:flex;align-items:center;gap:0.5rem;">
+                                <input type="checkbox" id="recursiveToggle">
+                                <span>Recursive (scan subfolders)</span>
+                            </label>
+                            <button class="btn" id="addFromTree" style="width:100%;margin-top:0.5rem;justify-content:center;">
+                                + Add Selected Folder
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="control-group relative">
+                <button class="btn btn-icon" id="cacheStatus" title="Cache Status">📊</button>
+                <div class="folder-menu" id="cacheMenu">
+                    <div class="folder-menu-header">
+                        <h4>Thumbnail Cache</h4>
+                    </div>
+                    <div id="cacheStats" style="padding:0.5rem;font-size:0.85rem;">
+                        <div style="color:var(--text-muted)">Loading cache status...</div>
+                    </div>
+                    <div style="padding:0.5rem;border-top:1px solid var(--border);">
+                        <button class="btn" id="generateThumbnails" style="width:100%;justify-content:center;">
+                            🖼️ Generate All Thumbnails
+                        </button>
+                    </div>
+                    <div style="padding:0.5rem;font-size:0.75rem;color:var(--text-muted);">
+                        Thumbnails are cached as WebP at 800x800 max for faster loading.
+                        Generated once per image, reused across all sizes.
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="header-controls">
+            <input type="search" class="search-bar" id="searchInput" placeholder="Filter filename...">
+            <input type="search" class="search-bar search-meta" id="searchMeta" placeholder="Search prompts...">
+        </div>
+    </div>
+</header>
+
+<div class="gallery-stats" id="galleryStats">Loading images...</div>
+
+<main class="gallery grid-view" id="galleryContainer"></main>
+<div id="galleryError">
+    <p style="font-size:1.5rem;">⚠️ Could not load images</p>
+    <p>Make sure the Flask server is running and image folders exist.</p>
+</div>
+
+<!-- Lightbox Modal -->
+<div class="modal closed" id="lightbox-modal">
+    <button class="close-modal" id="closeModal">&times;</button>
+
+    <div class="modal-content">
+        <button class="nav-btn left-btn" id="prevBtn" aria-label="Previous Image">&lt;</button>
+        <button class="nav-btn right-btn" id="nextBtn" aria-label="Next Image">&gt;</button>
+        <button class="nav-btn play-btn" id="playBtn" aria-label="Play Slideshow">▶</button>
+
+        <div class="preview-pane">
+            <img id="modalImg" src="" alt="Full view">
+        </div>
+
+        <div class="image-counter" id="imageCounter">0 / 0</div>
+
+        <button class="export-btn" id="exportBtn" title="Export Workflow JSON">
+            📥 Export JSON
+        </button>
+
+        <button class="info-panel-toggle" id="infoPanelToggle">📋 AI Info</button>
+
+        <div class="info-panel" id="infoPanel">
+            <div class="info-header">
+                <div>
+                    <span id="sourceBadge" class="tag">Scanning…</span>
+                    <h3 id="imageName" style="margin: 0.4rem 0 0;">image.png</h3>
+                    <div id="imageFolder" style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;"></div>
+                </div>
+                <button class="close-panel" id="closePanel">&times;</button>
+            </div>
+            <div class="tabs">
+                <div class="tab active" id="tabHandle-formatted" onclick="switchTab('formatted')">CLEAN VIEW</div>
+                <div class="tab" id="tabHandle-raw" onclick="switchTab('raw')">RAW DATA</div>
+            </div>
+            <div class="info-body">
+                <div id="tab-formatted" class="tab-content active">
+                    <div class="prompt-section">
+                        <div class="prompt-label">
+                            <span>POSITIVE PROMPT</span>
+                            <button class="copy-btn" onclick="copyText('posText', this)">Copy</button>
+                        </div>
+                        <div class="prompt-box" id="posText">Extracting…</div>
+                    </div>
+                    <div class="prompt-section">
+                        <div class="prompt-label">
+                            <span style="color:var(--negative)">NEGATIVE PROMPT</span>
+                            <button class="copy-btn" onclick="copyText('negText', this)">Copy</button>
+                        </div>
+                        <div class="prompt-box" id="negText">None</div>
+                    </div>
+                    <div class="prompt-label">GENERATION SETTINGS</div>
+                    <div class="settings-grid" id="settingsGrid"></div>
+                </div>
+                <div id="tab-raw" class="tab-content">
+                    <div class="prompt-label">
+                        <span>FULL METADATA CHUNKS</span>
+                        <button class="copy-btn" onclick="copyText('rawText', this)">Copy All</button>
+                    </div>
+                    <div class="raw-box" id="rawText">Loading…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ==================== SHARED AI METADATA LIBRARY v2.0 ====================
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function extractPNGMetadata(buffer) {
+    const view = new DataView(buffer);
+    const metadata = {};
+    let offset = 8;
+
+    while (offset < buffer.byteLength - 12) {
+        if (offset + 8 > buffer.byteLength) break;
+        const len = view.getUint32(offset, false);
+        if (offset + 12 + len > buffer.byteLength) break;
+
+        const type = String.fromCharCode(
+            view.getUint8(offset + 4), view.getUint8(offset + 5),
+            view.getUint8(offset + 6), view.getUint8(offset + 7)
+        );
+
+        if (type === 'IEND') break;
+
+        if (type === 'tEXt' || type === 'iTXt' || type === 'zTXt') {
+            const chunk = new Uint8Array(buffer, offset + 8, len);
+            const nullIdx = chunk.indexOf(0);
+            if (nullIdx !== -1) {
+                const key = new TextDecoder().decode(chunk.subarray(0, nullIdx));
+                let value = '';
+
+                if (type === 'zTXt') {
+                    value = '[zTXt compressed]';
+                } else if (type === 'iTXt') {
+                    let pos = nullIdx + 1;
+                    const compressionFlag = chunk[pos] || 0;
+                    pos += 2;
+                    while (pos < chunk.length && chunk[pos] !== 0) pos++;
+                    pos++;
+                    while (pos < chunk.length && chunk[pos] !== 0) pos++;
+                    pos++;
+                    if (compressionFlag === 0) {
+                        value = new TextDecoder('utf-8', { fatal: false }).decode(chunk.subarray(pos));
+                    } else {
+                        value = '[iTXt compressed]';
+                    }
+                } else {
+                    value = new TextDecoder('utf-8', { fatal: false }).decode(chunk.subarray(nullIdx + 1));
+                }
+                metadata[key] = value;
+            }
+        }
+        offset += 12 + len;
+    }
+    return metadata;
+}
+
+function extractEXIFMetadata(buffer) {
+    const data = new DataView(buffer);
+    const metadata = {};
+
+    if (data.getUint16(0) !== 0xFFD8) {
+        if (buffer.byteLength >= 4 && data.getUint32(0, true) === 0x52494646) {
+            return extractWebPExif(buffer);
+        }
+        return metadata;
+    }
+
+    let offset = 2;
+    while (offset < buffer.byteLength - 4) {
+        if (offset + 2 > buffer.byteLength) break;
+        const marker = data.getUint16(offset);
+
+        if (marker === 0xFFD9 || marker === 0xFFDA) break;
+
+        if (marker === 0xFFE1) {
+            const length = data.getUint16(offset + 2);
+            if (offset + 4 + length > buffer.byteLength) break;
+            const app1 = new Uint8Array(buffer, offset + 4, Math.min(length - 2, 6));
+            if (app1[0] === 0x45 && app1[1] === 0x78 && app1[2] === 0x69 && app1[3] === 0x66) {
+                try { return parseExifDir(buffer, offset + 4 + 6); }
+                catch (e) { console.warn('EXIF parse error:', e); }
+            }
+            offset += 2 + length;
+            continue;
+        }
+
+        if ((marker & 0xFF00) === 0xFF00 && marker !== 0xFFFF) {
+            if (offset + 4 > buffer.byteLength) break;
+            offset += 2 + data.getUint16(offset + 2);
+        } else {
+            offset++;
+        }
+    }
+    return metadata;
+}
+
+function extractWebPExif(buffer) {
+    const data = new DataView(buffer);
+    let offset = 12;
+    while (offset + 8 <= buffer.byteLength) {
+        const ct = String.fromCharCode(
+            data.getUint8(offset),     data.getUint8(offset + 1),
+            data.getUint8(offset + 2), data.getUint8(offset + 3)
+        );
+        const size = data.getUint32(offset + 4, true);
+        if (ct === 'EXIF') {
+            let exifStart = offset + 8;
+            if (exifStart + 6 <= buffer.byteLength) {
+                const b = new Uint8Array(buffer, exifStart, 4);
+                if (b[0] === 0x45 && b[1] === 0x78 && b[2] === 0x69 && b[3] === 0x66) {
+                    exifStart += 6;
+                }
+            }
+            try { return parseExifDir(buffer, exifStart); } catch (e) {}
+        }
+        offset += 8 + size + (size & 1);
+    }
+    return {};
+}
+
+function parseExifDir(buffer, tiffStart) {
+    const data = new DataView(buffer);
+    if (tiffStart + 8 > buffer.byteLength) return {};
+    const isLittle = data.getUint16(tiffStart) === 0x4949;
+    if (data.getUint16(tiffStart + 2, isLittle) !== 42) return {};
+
+    const ifd0 = tiffStart + data.getUint32(tiffStart + 4, isLittle);
+    const metadata = {};
+    const visited = new Set();
+    const TYPE_SIZES = { 1:1, 2:1, 3:2, 4:4, 5:8, 6:1, 7:1, 8:2, 9:4, 10:8, 11:4, 12:8 };
+
+    function readIFD(offset) {
+        if (offset + 2 > buffer.byteLength || visited.has(offset)) return;
+        visited.add(offset);
+        const numEntries = data.getUint16(offset, isLittle);
+        if (numEntries > 1000) return;
+
+        for (let i = 0; i < numEntries; i++) {
+            const e = offset + 2 + i * 12;
+            if (e + 12 > buffer.byteLength) break;
+
+            const tag   = data.getUint16(e,     isLittle);
+            const type  = data.getUint16(e + 2, isLittle);
+            const count = data.getUint32(e + 4, isLittle);
+            const sz    = (TYPE_SIZES[type] || 1) * count;
+
+            let vo = e + 8;
+            if (sz > 4) vo = tiffStart + data.getUint32(vo, isLittle);
+            if (vo + sz > buffer.byteLength) continue;
+
+            if (tag === 0x9286) {
+                try {
+                    const encBytes = new Uint8Array(buffer, vo, Math.min(8, count));
+                    const enc = new TextDecoder('ascii', { fatal: false }).decode(encBytes);
+                    const contentLen = Math.max(0, count - 8);
+                    const content = new Uint8Array(buffer, vo + 8, contentLen);
+                    const isUnicode = enc.startsWith('UNICODE');
+                    const charSet = isUnicode ? (isLittle ? 'utf-16le' : 'utf-16be') : 'utf-8';
+                    metadata['parameters'] = new TextDecoder(charSet, { fatal: false })
+                        .decode(content).replace(/\0/g, '').trim();
+                } catch (err) {
+                    console.warn('UserComment decode error:', err);
+                }
+            }
+
+            if (tag === 0x8769 || tag === 0x8825 || tag === 0xA005) {
+                readIFD(tiffStart + data.getUint32(e + 8, isLittle));
+            }
+        }
+    }
+
+    readIFD(ifd0);
+    return metadata;
+}
+
+function extractTextFallback(buffer) {
+    const maxBytes = Math.min(900000, buffer.byteLength);
+    const str = new TextDecoder('utf-8', { fatal: false })
+        .decode(new Uint8Array(buffer, 0, maxBytes));
+    const meta = {};
+
+    const a111 = str.match(/parameters[\x00-\x08]*([\s\S]{30,7000}?Steps:\s*\d+)/i);
+    if (a111) meta.parameters = a111[1].replace(/\0/g, '').trim();
+
+    const comfy = str.match(/"prompt"\s*:\s*(\{[\s\S]{100,12000}?\})\s*[,}\0]/s)
+               || str.match(/prompt\0+(\{[\s\S]{100,12000}?\})\0/s);
+    if (comfy) meta.prompt = comfy[1];
+
+    const wf = str.match(/"workflow"\s*:\s*(\{[\s\S]{100,12000}?\})\s*[,}\0]/s)
+            || str.match(/workflow\0+(\{[\s\S]{100,12000}?\})\0/s);
+    if (wf) meta.workflow = wf[1];
+
+    return meta;
+}
+
+function processMetadata(chunks) {
+    const res = {
+        source: 'Unknown',
+        positive: 'No AI metadata found.',
+        negative: '',
+        settings: {}
+    };
+
+    if (chunks.prompt || chunks.workflow) {
+        res.source = 'ComfyUI';
+        try {
+            const graph = JSON.parse(chunks.prompt || chunks.workflow);
+
+            const sampler = Object.values(graph).find(n =>
+                n?.class_type && (n.class_type.includes('KSampler') || n.class_type.includes('Sampler'))
+            );
+            if (sampler?.inputs) {
+                const inp = sampler.inputs;
+                res.settings = {
+                    Steps:     inp.steps     ?? '?',
+                    CFG:       inp.cfg       ?? '?',
+                    Sampler:   inp.sampler_name || inp.sampler || '?',
+                    Scheduler: inp.scheduler || '?',
+                    Seed:      inp.seed      ?? inp.noise_seed ?? '?',
+                };
+            }
+
+            const textNodes = Object.values(graph).filter(n =>
+                n?.inputs && (typeof n.inputs.text === 'string' || n?.class_type?.includes('Text'))
+            );
+            const texts = textNodes.map(n => n.inputs.text).filter(t => typeof t === 'string' && t.length > 10);
+            if (texts.length > 0) {
+                res.positive = texts[0];
+                if (texts.length > 1) res.negative = texts[1];
+            } else {
+                res.positive = 'Complex workflow. See RAW DATA tab.';
+            }
+        } catch (e) {
+            res.positive = 'ComfyUI workflow — see RAW DATA tab.';
+            console.warn('ComfyUI parse error:', e);
+        }
+    } else if (chunks.parameters) {
+        res.source = 'Automatic1111';
+        const p = chunks.parameters;
+        const negIdx   = p.indexOf('Negative prompt:');
+        const stepsIdx = p.lastIndexOf('Steps:');
+
+        if (negIdx !== -1) {
+            res.positive = p.slice(0, negIdx).trim();
+            res.negative  = p.slice(negIdx + 16, stepsIdx !== -1 ? stepsIdx : p.length).trim();
+        } else {
+            res.positive = stepsIdx !== -1 ? p.slice(0, stepsIdx).trim() : p.trim();
+        }
+
+        if (stepsIdx !== -1) {
+            p.slice(stepsIdx).split(/,(?=\s*[A-Za-z])/).forEach(part => {
+                const [k, ...vParts] = part.split(':');
+                if (k?.trim() && vParts.length) {
+                    res.settings[k.trim()] = vParts.join(':').trim();
+                }
+            });
+        }
+    } else if (Object.keys(chunks).length > 0) {
+        res.source = 'Unknown Format';
+        res.positive = 'Metadata found but format not recognized. Check RAW DATA tab.';
+    }
+
+    return res;
+}
+
+function renderSettingsGrid(settings) {
+    const entries = Object.entries(settings);
+    if (!entries.length) {
+        return "<p style='font-size:0.75rem; color:var(--text-muted)'>No generation settings detected.</p>";
+    }
+    return entries.map(([k, v]) =>
+        `<div class="setting-item">` +
+        `<span class="setting-key">${escapeHtml(k)}</span>` +
+        `<span class="setting-val">${escapeHtml(String(v))}</span>` +
+        `</div>`
+    ).join('');
+}
+
+function renderRawDisplay(raw) {
+    if (!raw || !Object.keys(raw).length) return 'No metadata chunks found.';
+    return Object.entries(raw).map(([key, val]) => {
+        let body;
+        try   { body = JSON.stringify(JSON.parse(val), null, 2); }
+        catch { body = String(val).substring(0, 8000); }
+        return `[${key}]\n${body}\n`;
+    }).join('\n');
+}
+
+// ==================== END SHARED AI METADATA LIBRARY ====================
+
+
+// ==================== GALLERY STATE & CONTROLS ====================
+
+const gallery = document.getElementById('galleryContainer');
+const detailModal = document.getElementById('lightbox-modal');
+const modalImg = document.getElementById('modalImg');
+const imageCounter = document.getElementById('imageCounter');
+const infoPanel = document.getElementById('infoPanel');
+const closePanel = document.getElementById('closePanel');
+const exportBtn = document.getElementById('exportBtn');
+const galleryStats = document.getElementById('galleryStats');
+
+// View controls
+const viewGridBtn = document.getElementById('viewGrid');
+const viewListBtn = document.getElementById('viewList');
+const sizeSmallBtn = document.getElementById('sizeSmall');
+const sizeMediumBtn = document.getElementById('sizeMedium');
+const sizeLargeBtn = document.getElementById('sizeLarge');
+
+// Folder menu
+const folderBtn = document.getElementById('folderBtn');
+const folderMenu = document.getElementById('folderMenu');
+const activeFoldersDiv = document.getElementById('activeFolders');
+const availableFoldersDiv = document.getElementById('availableFolders');
+const refreshFoldersBtn = document.getElementById('refreshFolders');
+const folderTreeSelect = document.getElementById('folderTreeSelect');
+const folderTreeDiv = document.getElementById('folderTree');
+const recursiveToggle = document.getElementById('recursiveToggle');
+const addFromTreeBtn = document.getElementById('addFromTree');
+let selectedTreeFolder = null;
+
+// Search inputs
+const searchInput = document.getElementById('searchInput');
+const searchMeta = document.getElementById('searchMeta');
+
+let allImages = [];
+let currentImages = [];
+let currentIndex = 0;
+let currentMetadata = {};
+let currentView = 'grid';
+let currentSize = 'medium';
+
+// Zoom/Pan State
+let currentScale = 1.0;
+let currentTranslateX = 0;
+let currentTranslateY = 0;
+let isDragging = false;
+let hasDragged = false;
+let startDragX = 0;
+let startDragY = 0;
+let lastTapTime = 0;
+
+// Slideshow State
+let slideshowInterval = null;
+let isSlideshowRunning = false;
+const SLIDESHOW_DELAY = 3500;
+
+// ==================== VIEW CONTROLS ====================
+
+function setView(view) {
+    currentView = view;
+    gallery.className = `gallery ${view}-view`;
+    viewGridBtn.classList.toggle('active', view === 'grid');
+    viewListBtn.classList.toggle('active', view === 'list');
+}
+
+function setGridSize(size) {
+    currentSize = size;
+    const root = document.documentElement;
+    sizeSmallBtn.classList.toggle('active', size === 'small');
+    sizeMediumBtn.classList.toggle('active', size === 'medium');
+    sizeLargeBtn.classList.toggle('active', size === 'large');
+    root.style.setProperty('--grid-size', `var(--grid-size-${size})`);
+}
+
+viewGridBtn.onclick = () => setView('grid');
+viewListBtn.onclick = () => setView('list');
+sizeSmallBtn.onclick = () => setGridSize('small');
+sizeMediumBtn.onclick = () => setGridSize('medium');
+sizeLargeBtn.onclick = () => setGridSize('large');
+
+// ==================== FOLDER MANAGEMENT ====================
+
+let galleryConfig = { folders: [] };
+
+// Helper: normalize folder config to object format
+function normalizeFolderConfig(folders) {
+    return folders.map(f => {
+        if (typeof f === 'string') {
+            return { name: f, recursive: false };
+        }
+        return f;
+    });
+}
+
+// Helper: get folder name from config item
+function getFolderName(folder) {
+    return typeof folder === 'string' ? folder : folder.name;
+}
+
+async function loadConfig() {
+    try {
+        const res = await fetch('/api/config');
+        galleryConfig = await res.json();
+        galleryConfig.folders = normalizeFolderConfig(galleryConfig.folders);
+        renderFolderMenu();
+    } catch (e) {
+        console.error('Failed to load config:', e);
+    }
+}
+
+async function saveConfig(folders) {
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folders })
+        });
+        galleryConfig = await res.json();
+        galleryConfig.folders = normalizeFolderConfig(galleryConfig.folders);
+        renderFolderMenu();
+        fetchImages();
+    } catch (e) {
+        console.error('Failed to save config:', e);
+    }
+}
+
+async function refreshFolderList() {
+    try {
+        const res = await fetch('/api/folders');
+        const folders = await res.json();
+        renderFolderMenu(folders);
+        populateFolderTreeSelect(folders);
+    } catch (e) {
+        console.error('Failed to refresh folders:', e);
+    }
+}
+
+function populateFolderTreeSelect(folders) {
+    folderTreeSelect.innerHTML = folders.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('');
+    if (folders.length) {
+        loadFolderTree(folders[0]);
+    }
+}
+
+async function loadFolderTree(folderName) {
+    try {
+        const res = await fetch(`/api/folder/tree?folder=${encodeURIComponent(folderName)}`);
+        const tree = await res.json();
+        renderFolderTree(tree, folderName);
+    } catch (e) {
+        console.error('Failed to load folder tree:', e);
+    }
+}
+
+function renderFolderTree(tree, folderName, depth = 0) {
+    if (!tree || !tree.length) {
+        folderTreeDiv.innerHTML = '<div style="padding:0.5rem;color:var(--text-muted)">No folders found</div>';
+        return;
+    }
+
+    selectedTreeFolder = null;
+
+    function renderItems(items, currentDepth, basePath = '') {
+        let html = '';
+        for (const item of items) {
+            const indent = currentDepth * 1.5;
+            const itemPath = basePath ? `${basePath}/${item.name}` : item.name;
+            const itemClass = `tree-item ${currentDepth > 0 ? 'tree-indent' : ''}`;
+
+            if (item.type === 'folder') {
+                html += `
+                    <div class="${itemClass} tree-item-folder" style="padding-left:${indent}rem" data-path="${itemPath}" data-folder="${folderName}">
+                        <span class="folder-icon">📁</span>
+                        <span>${escapeHtml(item.name)}</span>
+                    </div>
+                `;
+                if (item.children) {
+                    html += renderItems(item.children, currentDepth + 1, itemPath);
+                }
+            } else {
+                html += `
+                    <div class="${itemClass} tree-item-file" style="padding-left:${indent}rem" data-path="${itemPath}" data-folder="${folderName}">
+                        <span class="folder-icon">🖼️</span>
+                        <span>${escapeHtml(item.name)}</span>
+                    </div>
+                `;
+            }
+        }
+        return html;
+    }
+
+    folderTreeDiv.innerHTML = renderItems(tree, 0);
+
+    // Add click handlers for tree items
+    folderTreeDiv.querySelectorAll('.tree-item-folder').forEach(el => {
+        el.addEventListener('click', () => {
+            folderTreeDiv.querySelectorAll('.tree-item').forEach(i => i.classList.remove('selected'));
+            el.classList.add('selected');
+            selectedTreeFolder = {
+                folder: folderName,
+                subfolder: el.dataset.path,
+                isRoot: el.dataset.path === el.dataset.path.split('/')[0]
+            };
+        });
+    });
+}
+
+function renderFolderMenu(availableFolders = []) {
+    // Normalize config folders
+    const normalizedFolders = normalizeFolderConfig(galleryConfig.folders);
+
+    if (!availableFolders.length) {
+        availableFoldersDiv.innerHTML = '<div style="padding:0.5rem;color:var(--text-muted)">Click refresh to load</div>';
+    } else {
+        const activeNames = new Set(normalizedFolders.map(f => f.name));
+        availableFoldersDiv.innerHTML = availableFolders
+            .filter(f => !activeNames.has(f))
+            .map(f => `
+                <div class="folder-available-item">
+                    <span onclick="addFolder('${f}')">+ ${escapeHtml(f)}</span>
+                    <button onclick="event.stopPropagation();loadFolderTree('${f}')">🌳</button>
+                </div>
+            `).join('') || '<div style="padding:0.5rem;color:var(--text-muted)">No more folders</div>';
+    }
+
+    activeFoldersDiv.innerHTML = normalizedFolders.map(f => `
+        <div class="folder-item active">
+            <div class="folder-item-info">
+                <span class="folder-item-name">📁 ${escapeHtml(f.name)}</span>
+                ${f.subfolder ? `<span class="folder-item-subfolder">${escapeHtml(f.subfolder)}</span>` : ''}
+            </div>
+            <div class="folder-item-controls">
+                <label class="recursive-toggle">
+                    <input type="checkbox" ${f.recursive ? 'checked' : ''} onchange="toggleRecursive('${f.name}', this.checked)">
+                    <span>Recursive</span>
+                </label>
+                <span class="folder-remove" onclick="removeFolder('${f.name}', event)">×</span>
+            </div>
+        </div>
+    `).join('') || '<div style="padding:0.5rem;color:var(--text-muted)">No folders selected</div>';
+}
+
+function addFolder(folder) {
+    const folderName = typeof folder === 'string' ? folder : folder.name;
+    const normalizedFolders = normalizeFolderConfig(galleryConfig.folders);
+    const exists = normalizedFolders.some(f => f.name === folderName);
+
+    if (!exists) {
+        normalizedFolders.push({ name: folderName, recursive: false });
+        saveConfig(normalizedFolders);
+    }
+}
+
+function removeFolder(folderName, event) {
+    event.stopPropagation();
+    const normalizedFolders = normalizeFolderConfig(galleryConfig.folders);
+    const updated = normalizedFolders.filter(f => f.name !== folderName);
+    saveConfig(updated);
+}
+
+function toggleRecursive(folderName, isRecursive) {
+    const normalizedFolders = normalizeFolderConfig(galleryConfig.folders);
+    const updated = normalizedFolders.map(f =>
+        f.name === folderName ? { ...f, recursive: isRecursive } : f
+    );
+    saveConfig(updated);
+}
+
+// Tab switching
+document.querySelectorAll('.folder-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.folder-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        const tabName = tab.dataset.tab;
+        document.querySelector('.folder-list-view').style.display = tabName === 'list' ? 'block' : 'none';
+        document.querySelector('.folder-tree-container').classList.toggle('active', tabName === 'tree');
+    });
+});
+
+// Folder tree select change
+folderTreeSelect.addEventListener('change', () => {
+    loadFolderTree(folderTreeSelect.value);
+});
+
+// Add from tree button
+addFromTreeBtn.addEventListener('click', () => {
+    if (!selectedTreeFolder) {
+        alert('Please select a folder from the tree first');
+        return;
+    }
+
+    const recursive = recursiveToggle.checked;
+    const normalizedFolders = normalizeFolderConfig(galleryConfig.folders);
+
+    if (selectedTreeFolder.isRoot) {
+        // Adding root folder
+        const exists = normalizedFolders.some(f => f.name === selectedTreeFolder.folder);
+        if (!exists) {
+            normalizedFolders.push({ name: selectedTreeFolder.folder, recursive });
+            saveConfig(normalizedFolders);
+        } else {
+            alert('This folder is already in your gallery');
+        }
+    } else {
+        // Adding subfolder - for now we need to add the parent with recursive
+        const exists = normalizedFolders.some(f => f.name === selectedTreeFolder.folder);
+        if (!exists) {
+            normalizedFolders.push({ name: selectedTreeFolder.folder, recursive: true });
+            saveConfig(normalizedFolders);
+            alert(`Added ${selectedTreeFolder.folder} with recursive mode to include subfolders`);
+        } else {
+            alert('Parent folder already exists. Use Recursive mode to include subfolders.');
+        }
+    }
+});
+
+folderBtn.onclick = (e) => {
+    e.stopPropagation();
+    folderMenu.classList.toggle('open');
+    refreshFolderList();
+};
+
+refreshFoldersBtn.onclick = () => refreshFolderList();
+
+document.addEventListener('click', (e) => {
+    if (!folderMenu.contains(e.target) && e.target !== folderBtn) {
+        folderMenu.classList.remove('open');
+    }
+});
+
+// ==================== THEME TOGGLE ====================
+
+const themeToggle = document.getElementById('themeToggle');
+themeToggle.onclick = () => {
+    const next = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.body.setAttribute('data-theme', next);
+    localStorage.setItem('gallery-theme', next);
+};
+const savedTheme = localStorage.getItem('gallery-theme');
+if (savedTheme) document.body.setAttribute('data-theme', savedTheme);
+
+// ==================== ZOOM/PAN FUNCTIONS ====================
+
+function applyTransform() {
+    modalImg.style.transform = `translate(${currentTranslateX}px, ${currentTranslateY}px) scale(${currentScale})`;
+}
+
+function setScale(newScale) {
+    const MIN_SCALE = 1.0;
+    const MAX_SCALE = 5.0;
+    currentScale = Math.min(Math.max(newScale, MIN_SCALE), MAX_SCALE);
+    applyTransform();
+}
+
+function handleZoomToFit() {
+    currentScale = 1.0;
+    currentTranslateX = 0;
+    currentTranslateY = 0;
+    applyTransform();
+}
+
+function handleZoomAndPan(event) {
+    event.preventDefault();
+    const delta = event.deltaY;
+    const zoomSpeed = -0.002;
+    const scaleChange = delta * zoomSpeed;
+    setScale(currentScale + scaleChange);
+}
+
+function handleDrag(event) {
+    if (!isDragging) return;
+    hasDragged = true;
+    currentTranslateX += (event.clientX - startDragX);
+    currentTranslateY += (event.clientY - startDragY);
+    applyTransform();
+    startDragX = event.clientX;
+    startDragY = event.clientY;
+}
+
+// ==================== SLIDESHOW FUNCTIONS ====================
+
+function startSlideshow() {
+    isSlideshowRunning = true;
+    document.getElementById('playBtn').textContent = '⏸';
+
+    if (detailModal.requestFullscreen) {
+        detailModal.requestFullscreen().catch(err => console.warn("Fullscreen denied", err));
+    } else if (detailModal.webkitRequestFullscreen) {
+        detailModal.webkitRequestFullscreen();
+    }
+
+    slideshowInterval = setInterval(() => {
+        cycleGallery(1);
+    }, SLIDESHOW_DELAY);
+}
+
+function stopSlideshow() {
+    if (!isSlideshowRunning) return;
+
+    isSlideshowRunning = false;
+    document.getElementById('playBtn').textContent = '▶';
+    clearInterval(slideshowInterval);
+
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+    }
+}
+
+function toggleSlideshow() {
+    if (isSlideshowRunning) {
+        stopSlideshow();
+    } else {
+        startSlideshow();
+    }
+}
+
+// ==================== NAVIGATION FUNCTIONS ====================
+
+function cycleGallery(direction) {
+    if (currentImages.length === 0) return;
+    currentIndex = (currentIndex + direction + currentImages.length) % currentImages.length;
+    const nextFile = currentImages[currentIndex];
+    openDetails(nextFile, true);
+}
+
+function updateImageCounter() {
+    imageCounter.textContent = `${currentIndex + 1} / ${currentImages.length}`;
+}
+
+// ==================== TAB SWITCHING ====================
+
+function switchTab(type) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById(`tabHandle-${type}`).classList.add('active');
+    document.getElementById(`tab-${type}`).classList.add('active');
+}
+
+// ==================== COPY FUNCTION ====================
+
+function copyText(id, btn) {
+    const textEl = document.getElementById(id);
+    if (!textEl) return;
+    const text = textEl.textContent.trim();
+    const flash = () => {
+        if (!btn) return;
+        const orig = btn.textContent;
+        btn.textContent = '✅ Copied!';
+        setTimeout(() => btn.textContent = orig, 1200);
+    };
+    navigator.clipboard.writeText(text).then(flash).catch(() => {
+        const range = document.createRange();
+        range.selectNode(textEl);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(range);
+        document.execCommand('copy');
+        window.getSelection().removeAllRanges();
+        flash();
+    });
+}
+
+// ==================== EXPORT WORKFLOW ====================
+
+async function exportWorkflow() {
+    if (!allImages[currentIndex]) return;
+
+    const img = allImages[currentIndex];
+    exportBtn.disabled = true;
+    exportBtn.textContent = '📥 Exporting...';
+
+    try {
+        const res = await fetch('/api/export/workflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                folder: img.folder,
+                filename: img.filename
+            })
+        });
+
+        if (!res.ok) throw new Error('Export failed');
+
+        const data = await res.json();
+
+        // Download the JSON file
+        const blob = new Blob([JSON.stringify(data.workflow, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        exportBtn.textContent = '✅ Downloaded!';
+        setTimeout(() => exportBtn.textContent = '📥 Export JSON', 2000);
+
+    } catch (e) {
+        console.error('Export error:', e);
+        exportBtn.textContent = '❌ Export Failed';
+        setTimeout(() => exportBtn.textContent = '📥 Export JSON', 2000);
+    }
+
+    exportBtn.disabled = false;
+}
+
+exportBtn.onclick = exportWorkflow;
+
+// ==================== RENDER GALLERY ====================
+
+function render(items) {
+    if (!items.length) {
+        gallery.innerHTML = "<p style='grid-column:1/-1; text-align:center; color:var(--text-muted); padding:4rem'>No images found.</p>";
+        galleryStats.textContent = 'No images';
+        return;
+    }
+
+    galleryStats.textContent = `${items.length} image${items.length !== 1 ? 's' : ''} from ${new Set(items.map(i => i.folder)).size} folder${new Set(items.map(i => i.folder)).size !== 1 ? 's' : ''}`;
+
+    if (currentView === 'grid') {
+        gallery.innerHTML = items.map((img, idx) => {
+            const name = escapeHtml(img.filename.replace(/\.[^/.]+$/, ''));
+            // Use thumbnail if available, otherwise fall back to original
+            const src = img.thumbnail
+                ? escapeHtml(img.thumbnail)
+                : escapeHtml(img.path) + '?mtime=' + encodeURIComponent(img.mtime);
+            const fallback = escapeHtml(img.path) + '?mtime=' + encodeURIComponent(img.mtime);
+            return `<div class="item" data-idx="${idx}" data-full="${fallback}">` +
+                   `<img src="${src}" loading="lazy" onerror="this.src='${fallback}'" alt="${name}">` +
+                   `<div class="item-info">${name}</div>` +
+                   `</div>`;
+        }).join('');
+    } else {
+        gallery.innerHTML = items.map((img, idx) => {
+            const name = escapeHtml(img.filename.replace(/\.[^/.]+$/, ''));
+            const src = img.thumbnail
+                ? escapeHtml(img.thumbnail)
+                : escapeHtml(img.path) + '?mtime=' + encodeURIComponent(img.mtime);
+            const fallback = escapeHtml(img.path) + '?mtime=' + encodeURIComponent(img.mtime);
+            return `<div class="item" data-idx="${idx}" data-full="${fallback}">` +
+                   `<img src="${src}" loading="lazy" onerror="this.src='${fallback}'" alt="${name}">` +
+                   `<div class="item-info">` +
+                   `<div>${name}</div>` +
+                   `<div class="item-folder">📁 ${escapeHtml(img.folder)}</div>` +
+                   `</div>` +
+                   `</div>`;
+        }).join('');
+    }
+
+    // Store current index mapping
+    items.forEach((img, idx) => {
+        const origIdx = allImages.findIndex(i => i.path === img.path);
+        const itemEl = gallery.querySelector(`[data-idx="${idx}"]`);
+        if (itemEl) itemEl.dataset.origIdx = origIdx;
+    });
+}
+
+// Gallery click handler
+gallery.addEventListener('click', e => {
+    const item = e.target.closest('.item');
+    if (item) {
+        const idx = parseInt(item.dataset.idx, 10);
+        if (!isNaN(idx) && currentImages[idx]) {
+            currentIndex = idx;
+            openDetails(currentImages[idx]);
+        }
+    }
+});
+
+// ==================== OPEN IMAGE DETAILS ====================
+
+async function openDetails(imgObj, isNavigation = false) {
+    modalImg.src = imgObj.path;
+    document.getElementById('imageName').textContent = imgObj.filename;
+    document.getElementById('imageFolder').textContent = `📁 ${imgObj.folder}`;
+    updateImageCounter();
+
+    if (!isNavigation) {
+        document.getElementById('sourceBadge').textContent = 'Scanning…';
+        document.getElementById('posText').textContent = 'Extracting…';
+        document.getElementById('negText').textContent = 'Please wait…';
+        document.getElementById('settingsGrid').innerHTML = '';
+        document.getElementById('rawText').textContent = 'Reading…';
+        switchTab('formatted');
+        exportBtn.textContent = '📥 Export JSON';
+    }
+
+    detailModal.classList.remove('closed');
+    handleZoomToFit();
+
+    try {
+        const resp = await fetch(imgObj.path);
+        const buffer = await resp.arrayBuffer();
+        let rawMeta = {};
+
+        const lower = imgObj.path.toLowerCase();
+        if (lower.endsWith('.png')) {
+            rawMeta = extractPNGMetadata(buffer);
+        } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp')) {
+            rawMeta = extractEXIFMetadata(buffer);
+            if (!Object.keys(rawMeta).length) rawMeta = extractTextFallback(buffer);
+        } else {
+            rawMeta = extractTextFallback(buffer);
+        }
+
+        currentMetadata = processMetadata(rawMeta);
+        document.getElementById('sourceBadge').textContent = currentMetadata.source;
+        document.getElementById('posText').textContent = currentMetadata.positive || 'No positive prompt found.';
+        document.getElementById('negText').textContent = currentMetadata.negative || 'None';
+        document.getElementById('settingsGrid').innerHTML = renderSettingsGrid(currentMetadata.settings);
+        document.getElementById('rawText').textContent = renderRawDisplay(rawMeta);
+    } catch (e) {
+        console.error('Metadata extraction error:', e);
+        document.getElementById('sourceBadge').textContent = 'ERROR';
+        document.getElementById('posText').textContent = 'Failed to read metadata: ' + e.message;
+    }
+}
+
+// ==================== CLOSE MODAL ====================
+
+document.getElementById('closeModal').onclick = closeLightbox;
+
+function closeLightbox() {
+    stopSlideshow();
+    detailModal.classList.add('closed');
+    handleZoomToFit();
+    modalImg.style.cursor = 'grab';
+    infoPanel.classList.remove('open');
+}
+
+detailModal.addEventListener('click', e => {
+    if (e.target === detailModal) {
+        closeLightbox();
+    }
+});
+
+// ==================== KEYBOARD CONTROLS ====================
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        if (infoPanel.classList.contains('open')) {
+            infoPanel.classList.remove('open');
+        } else {
+            closeLightbox();
+        }
+    } else if (!detailModal.classList.contains('closed')) {
+        stopSlideshow();
+        if (e.key === 'ArrowRight') {
+            cycleGallery(1);
+        } else if (e.key === 'ArrowLeft') {
+            cycleGallery(-1);
+        } else if (e.key === ' ') {
+            e.preventDefault();
+            toggleSlideshow();
+        } else if (e.key === 'e' || e.key === 'E') {
+            exportWorkflow();
+        }
+    }
+});
+
+// ==================== SEARCH FILTERS ====================
+
+async function filterImages() {
+    const term = searchInput.value.toLowerCase().trim();
+    const metaQuery = searchMeta.value.toLowerCase().trim();
+
+    let images = [...allImages];
+
+    // Filename filter
+    if (term) {
+        images = images.filter(img => img.filename.toLowerCase().includes(term));
+    }
+
+    // Metadata filter
+    if (metaQuery) {
+        try {
+            const res = await fetch('/api/metadata/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: metaQuery })
+            });
+            const matched = await res.json();
+            const matchedPaths = new Set(matched.map(m => m.path));
+            images = images.filter(img => matchedPaths.has(img.path));
+        } catch (e) {
+            console.error('Metadata search error:', e);
+        }
+    }
+
+    currentImages = images;
+    render(images);
+}
+
+searchInput.oninput = filterImages;
+searchMeta.oninput = filterImages;
+
+// ==================== MOUSE CONTROLS ====================
+
+modalImg.addEventListener('wheel', e => {
+    stopSlideshow();
+    handleZoomAndPan(e);
+}, { passive: false });
+
+modalImg.addEventListener('mousedown', e => {
+    e.preventDefault();
+    stopSlideshow();
+    isDragging = true;
+    hasDragged = false;
+    startDragX = e.clientX;
+    startDragY = e.clientY;
+    modalImg.classList.add('grabbing');
+});
+
+document.addEventListener('mouseup', () => {
+    isDragging = false;
+    modalImg.classList.remove('grabbing');
+});
+
+modalImg.addEventListener('click', e => {
+    const currentTime = new Date().getTime();
+    const tapLength = currentTime - lastTapTime;
+    if (tapLength < 300 && tapLength > 0 && !hasDragged) {
+        handleZoomToFit();
+        e.preventDefault();
+    }
+    lastTapTime = currentTime;
+});
+
+document.addEventListener('mousemove', handleDrag);
+
+// ==================== TOUCH CONTROLS ====================
+
+modalImg.addEventListener('touchstart', e => {
+    stopSlideshow();
+    if (e.touches.length === 1) {
+        isDragging = true;
+        hasDragged = false;
+        startDragX = e.touches[0].clientX;
+        startDragY = e.touches[0].clientY;
+    }
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+    if (isDragging && e.touches.length === 1) {
+        hasDragged = true;
+        currentTranslateX += (e.touches[0].clientX - startDragX);
+        currentTranslateY += (e.touches[0].clientY - startDragY);
+        applyTransform();
+        startDragX = e.touches[0].clientX;
+        startDragY = e.touches[0].clientY;
+    }
+}, { passive: true });
+
+modalImg.addEventListener('touchend', e => {
+    isDragging = false;
+    if (!hasDragged && e.changedTouches.length === 1) {
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTapTime;
+        if (tapLength < 300 && tapLength > 0) {
+            handleZoomToFit();
+            if (e.cancelable) e.preventDefault();
+        }
+        lastTapTime = currentTime;
+    }
+});
+
+// ==================== NAVIGATION BUTTONS ====================
+
+document.getElementById('prevBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    stopSlideshow();
+    cycleGallery(-1);
+});
+
+document.getElementById('nextBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    stopSlideshow();
+    cycleGallery(1);
+});
+
+document.getElementById('playBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    toggleSlideshow();
+});
+
+// ==================== INFO PANEL ====================
+
+document.getElementById('infoPanelToggle').addEventListener('click', () => {
+    infoPanel.classList.toggle('open');
+});
+
+closePanel.addEventListener('click', () => {
+    infoPanel.classList.remove('open');
+});
+
+// ==================== WINDOW RESIZE ====================
+
+window.addEventListener('resize', () => {
+    if (!detailModal.classList.contains('closed')) handleZoomToFit();
+});
+
+// ==================== FETCH IMAGES ====================
+
+async function fetchImages() {
+    try {
+        const res = await fetch('/api/images');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        allImages = await res.json();
+        currentImages = [...allImages];
+        render(allImages);
+    } catch (e) {
+        console.error('Failed to fetch image list:', e);
+        gallery.style.display = 'none';
+        document.getElementById('galleryError').style.display = 'block';
+    }
+}
+
+// ==================== INITIALIZATION ====================
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadConfig();
+    fetchImages();
+});
+</script>
+</body>
+</html>
