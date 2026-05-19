@@ -304,6 +304,7 @@
             border-color: var(--accent);
             color: white;
         }
+        .relative { position: relative; }
         /* Folder Tree View */
         .folder-tree-container {
             display: none;
@@ -654,7 +655,6 @@
         <div class="header-left">
             <h2>AI Gallery Pro</h2>
             <button class="btn btn-icon" id="themeToggle" title="Toggle theme">🌓</button>
-            <button class="btn btn-icon" id="cacheStatus" title="Cache Status">📊</button>
         </div>
         <div class="header-controls">
             <div class="control-group">
@@ -709,7 +709,7 @@
                 </div>
             </div>
             <div class="control-group relative">
-                <button class="btn btn-icon" id="cacheStatus" title="Cache Status">📊</button>
+                <button class="btn btn-icon" id="cacheStatusBtn" title="Cache Status">📊</button>
                 <div class="folder-menu" id="cacheMenu">
                     <div class="folder-menu-header">
                         <h4>Thumbnail Cache</h4>
@@ -1426,7 +1426,49 @@ addFromTreeBtn.addEventListener('click', () => {
 folderBtn.onclick = (e) => {
     e.stopPropagation();
     folderMenu.classList.toggle('open');
+    cacheMenu.classList.remove('open');
     refreshFolderList();
+};
+
+const cacheStatusBtn = document.getElementById('cacheStatusBtn');
+const cacheMenu = document.getElementById('cacheMenu');
+const generateThumbnailsBtn = document.getElementById('generateThumbnails');
+
+cacheStatusBtn.onclick = (e) => {
+    e.stopPropagation();
+    cacheMenu.classList.toggle('open');
+    folderMenu.classList.remove('open');
+    loadCacheStatus();
+};
+
+async function loadCacheStatus() {
+    try {
+        const res = await fetch('/api/thumbnails/status');
+        const data = await res.json();
+        document.getElementById('cacheStats').innerHTML = `
+            <div class="cache-stat"><span class="cache-stat-label">Total images:</span><span class="cache-stat-value">${data.total}</span></div>
+            <div class="cache-stat"><span class="cache-stat-label">Thumbnails created:</span><span class="cache-stat-value">${data.created}</span></div>
+            <div class="cache-stat"><span class="cache-stat-label">Pending:</span><span class="cache-stat-value">${data.pending}</span></div>
+            <div class="cache-stat"><span class="cache-stat-label">Cache size:</span><span class="cache-stat-value">${data.cache_size_mb} MB</span></div>
+        `;
+    } catch (e) {
+        document.getElementById('cacheStats').innerHTML = '<div style="color:var(--text-muted)">Failed to load cache status</div>';
+    }
+}
+
+generateThumbnailsBtn.onclick = async () => {
+    generateThumbnailsBtn.disabled = true;
+    generateThumbnailsBtn.textContent = 'Generating...';
+    try {
+        const res = await fetch('/api/thumbnails/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json();
+        generateThumbnailsBtn.textContent = `Done! ${data.processed} generated`;
+        loadCacheStatus();
+        setTimeout(() => { generateThumbnailsBtn.textContent = '\uD83D\uDDBC\uFE0F Generate All Thumbnails'; generateThumbnailsBtn.disabled = false; }, 3000);
+    } catch (e) {
+        generateThumbnailsBtn.textContent = 'Failed';
+        setTimeout(() => { generateThumbnailsBtn.textContent = '\uD83D\uDDBC\uFE0F Generate All Thumbnails'; generateThumbnailsBtn.disabled = false; }, 3000);
+    }
 };
 
 refreshFoldersBtn.onclick = () => refreshFolderList();
@@ -1434,6 +1476,9 @@ refreshFoldersBtn.onclick = () => refreshFolderList();
 document.addEventListener('click', (e) => {
     if (!folderMenu.contains(e.target) && e.target !== folderBtn) {
         folderMenu.classList.remove('open');
+    }
+    if (!cacheMenu.contains(e.target) && e.target !== cacheStatusBtn) {
+        cacheMenu.classList.remove('open');
     }
 });
 
@@ -1577,7 +1622,7 @@ function copyText(id, btn) {
 async function exportWorkflow() {
     if (!allImages[currentIndex]) return;
 
-    const img = allImages[currentIndex];
+    const img = currentImages[currentIndex];
     exportBtn.disabled = true;
     exportBtn.textContent = '📥 Exporting...';
 
