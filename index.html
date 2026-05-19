@@ -1620,7 +1620,7 @@ function copyText(id, btn) {
 // ==================== EXPORT WORKFLOW ====================
 
 async function exportWorkflow() {
-    if (!allImages[currentIndex]) return;
+    if (!currentImages[currentIndex]) return;
 
     const img = currentImages[currentIndex];
     exportBtn.disabled = true;
@@ -1632,6 +1632,7 @@ async function exportWorkflow() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 folder: img.folder,
+                subfolder: img.subfolder || '',
                 filename: img.filename
             })
         });
