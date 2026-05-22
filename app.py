@@ -117,7 +117,11 @@ def get_image_dimensions(file_path):
 
 
 def update_or_create_image_record(file_path):
-    """Update or create image record in cache. Returns whether thumbnail needs generation."""
+    """Update or create image record in cache. Returns whether thumbnail needs generation.
+
+    If the thumbnail file already exists on disk, the DB record is updated to
+    reflect that (thumbnail_created = 1) and False is returned (no work needed).
+    """
     if not Path(file_path).exists():
         return False
 
@@ -131,6 +135,7 @@ def update_or_create_image_record(file_path):
         # Generate thumbnail path
         thumbnail_name = f"{xxh}.webp"
         thumbnail_path = THUMBNAIL_DIR / thumbnail_name
+        thumb_exists_on_disk = thumbnail_path.exists()
 
         needs_thumbnail = False
 
@@ -145,22 +150,37 @@ def update_or_create_image_record(file_path):
 
                 if row:
                     stored_xxhash, thumbnail_created = row
-                    # Update if hash changed or thumbnail doesn't exist
-                    if stored_xxhash != xxh or not thumbnail_path.exists():
+                    if stored_xxhash != xxh:
+                        # Hash changed – reset and regenerate
                         cursor.execute('''
                             UPDATE images SET
                                 xxhash = ?, size = ?, width = ?, height = ?, mtime = ?,
-                                thumbnail_created = 0, thumbnail_path = ?, updated_at = CURRENT_TIMESTAMP
+                                thumbnail_created = ?, thumbnail_path = ?, updated_at = CURRENT_TIMESTAMP
                             WHERE file_path = ?
-                        ''', (xxh, size, width, height, mtime, str(thumbnail_path), str(file_path)))
+                        ''', (xxh, size, width, height, mtime,
+                              1 if thumb_exists_on_disk else 0,
+                              str(thumbnail_path), str(file_path)))
+                        needs_thumbnail = not thumb_exists_on_disk
+                    elif not thumbnail_created and thumb_exists_on_disk:
+                        # Thumbnail file exists on disk but DB wasn't marked – fix it
+                        cursor.execute('''
+                            UPDATE images SET thumbnail_created = 1, updated_at = CURRENT_TIMESTAMP
+                            WHERE file_path = ?
+                        ''', (str(file_path),))
+                        needs_thumbnail = False
+                    elif not thumbnail_created and not thumb_exists_on_disk:
+                        # Record exists but thumbnail is missing
                         needs_thumbnail = True
+                    # else: hash matches AND thumbnail_created == 1 – nothing to do
                 else:
                     # Create new record
                     cursor.execute('''
-                        INSERT INTO images (file_path, xxhash, size, width, height, mtime, thumbnail_path)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (str(file_path), xxh, size, width, height, mtime, str(thumbnail_path)))
-                    needs_thumbnail = True
+                        INSERT INTO images (file_path, xxhash, size, width, height, mtime,
+                                            thumbnail_created, thumbnail_path)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (str(file_path), xxh, size, width, height, mtime,
+                          1 if thumb_exists_on_disk else 0, str(thumbnail_path)))
+                    needs_thumbnail = not thumb_exists_on_disk
 
                 conn.commit()
             finally:
@@ -234,11 +254,35 @@ def get_thumbnail_path(file_path):
 # Background thread for thumbnail generation
 # Use queue.Queue instead of a plain list so put/get are inherently thread-safe.
 import queue as _queue
+from concurrent.futures import ThreadPoolExecutor
+
 thumbnail_queue = _queue.Queue()
 thumbnail_lock = threading.Lock()  # kept for API compatibility
 
 _thumbnail_worker_started = False
 _thumbnail_worker_lock = threading.Lock()
+
+# ── Mutual exclusion: only on-demand OR manual generation runs at a time ──────
+_generation_mode_lock = threading.Lock()  # guards _generation_mode
+_generation_mode = "idle"  # "idle" | "on_demand" | "manual"
+
+
+def _acquire_generation_mode(mode: str) -> bool:
+    """Try to set the generation mode. Returns True if acquired."""
+    global _generation_mode
+    with _generation_mode_lock:
+        if _generation_mode == "idle" or _generation_mode == mode:
+            _generation_mode = mode
+            return True
+        return False
+
+
+def _release_generation_mode(mode: str):
+    """Release the generation mode back to idle."""
+    global _generation_mode
+    with _generation_mode_lock:
+        if _generation_mode == mode:
+            _generation_mode = "idle"
 
 
 def _thumbnail_worker():
@@ -250,12 +294,24 @@ def _thumbnail_worker():
             continue
 
         try:
-            needs_thumbnail = update_or_create_image_record(file_path)
-            if needs_thumbnail:
-                xxh = get_file_xxhash(file_path)
-                thumb_path = THUMBNAIL_DIR / f"{xxh}.webp"
-                if generate_thumbnail(file_path, thumb_path):
-                    mark_thumbnail_created(file_path)
+            # Acquire on-demand mode; if manual generation is running, skip
+            if not _acquire_generation_mode("on_demand"):
+                # Manual generation is active, re-queue and wait
+                thumbnail_queue.put(file_path)
+                thumbnail_queue.task_done()
+                import time
+                time.sleep(0.5)
+                continue
+
+            try:
+                needs_thumbnail = update_or_create_image_record(file_path)
+                if needs_thumbnail:
+                    xxh = get_file_xxhash(file_path)
+                    thumb_path = THUMBNAIL_DIR / f"{xxh}.webp"
+                    if generate_thumbnail(file_path, thumb_path):
+                        mark_thumbnail_created(file_path)
+            finally:
+                _release_generation_mode("on_demand")
         except Exception as e:
             print(f"Error processing thumbnail for {file_path}: {e}")
         finally:
@@ -338,35 +394,67 @@ def serve_thumbnail(xxhash):
 
 @app.route("/api/thumbnails/generate", methods=["POST"])
 def generate_thumbnails():
-    """Generate thumbnails for images. Can be called with specific paths or all."""
-    import json
+    """Generate thumbnails for images using multiple threads.
+
+    Only runs if on-demand generation is not active (mutual exclusion).
+    """
     data = request.get_json() or {}
 
-    # Get image paths to process
-    if "paths" in data and data["paths"]:
-        # Process specific images
-        paths = data["paths"]
-    else:
-        # Process all images from current config
-        paths = _scan_images_full_paths()
+    # Acquire manual mode – fail fast if on-demand is active
+    if not _acquire_generation_mode("manual"):
+        return jsonify({"error": "Thumbnail generation is already in progress (on-demand)"}), 409
 
-    results = {"total": len(paths), "processed": 0, "failed": 0, "cached": 0}
+    try:
+        # Get image paths to process
+        if "paths" in data and data["paths"]:
+            paths = data["paths"]
+        else:
+            paths = _scan_images_full_paths()
 
-    for file_path in paths:
-        try:
-            thumbnail_path = get_thumbnail_path(file_path)
-            if thumbnail_path:
-                results["cached"] += 1
-                continue
+        results = {"total": len(paths), "processed": 0, "failed": 0, "cached": 0}
+        results_lock = threading.Lock()
 
-            if generate_thumbnail(file_path, thumbnail_path or THUMBNAIL_DIR / f"{get_file_xxhash(file_path)}.webp"):
-                mark_thumbnail_created(file_path)
-                update_or_create_image_record(file_path)
-                results["processed"] += 1
-            else:
-                results["failed"] += 1
-        except Exception as e:
-            results["failed"] += 1
+        def _process_one(file_path):
+            """Process a single image: create record, generate thumbnail, mark done."""
+            try:
+                # Step 1: Create/update the database record & check if thumbnail needed
+                needs_thumbnail = update_or_create_image_record(file_path)
+                if not needs_thumbnail:
+                    # Already has a valid thumbnail on disk and in DB
+                    with results_lock:
+                        results["cached"] += 1
+                    return
+
+                # Step 2: Generate the thumbnail file
+                xxh = get_file_xxhash(file_path)
+                thumb_path = THUMBNAIL_DIR / f"{xxh}.webp"
+
+                if thumb_path.exists():
+                    # File exists on disk (maybe from a previous partial run)
+                    mark_thumbnail_created(file_path)
+                    with results_lock:
+                        results["cached"] += 1
+                    return
+
+                if generate_thumbnail(file_path, thumb_path):
+                    # Step 3: Mark success in the database
+                    mark_thumbnail_created(file_path)
+                    with results_lock:
+                        results["processed"] += 1
+                else:
+                    with results_lock:
+                        results["failed"] += 1
+            except Exception:
+                with results_lock:
+                    results["failed"] += 1
+
+        # Use a thread pool for parallel thumbnail generation
+        num_workers = min(4, max(1, len(paths) // 10 + 1))
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            executor.map(_process_one, paths)
+
+    finally:
+        _release_generation_mode("manual")
 
     return jsonify(results)
 
