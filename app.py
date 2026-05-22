@@ -87,12 +87,28 @@ def init_cache_db():
                 mtime REAL,
                 thumbnail_created INTEGER DEFAULT 0,
                 thumbnail_path TEXT,
+                metadata_prompt TEXT,
+                metadata_workflow TEXT,
+                metadata_parameters TEXT,
                 added_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON images(file_path)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_xxhash ON images(xxhash)')
+        # Migrate existing databases: add metadata columns if missing
+        try:
+            cursor.execute('ALTER TABLE images ADD COLUMN metadata_prompt TEXT')
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute('ALTER TABLE images ADD COLUMN metadata_workflow TEXT')
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute('ALTER TABLE images ADD COLUMN metadata_parameters TEXT')
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
         conn.close()
 
@@ -116,11 +132,29 @@ def get_image_dimensions(file_path):
         return (0, 0)
 
 
+def extract_image_metadata(file_path):
+    """Extract prompt, workflow, and parameters metadata from an image file.
+
+    Returns a tuple of (prompt, workflow, parameters) as raw strings or None.
+    """
+    try:
+        from PIL import Image
+        with Image.open(file_path) as img:
+            info = img.info or {}
+            prompt = info.get("prompt")
+            workflow = info.get("workflow")
+            parameters = info.get("parameters")
+            return (prompt, workflow, parameters)
+    except Exception:
+        return (None, None, None)
+
+
 def update_or_create_image_record(file_path):
     """Update or create image record in cache. Returns whether thumbnail needs generation.
 
     If the thumbnail file already exists on disk, the DB record is updated to
     reflect that (thumbnail_created = 1) and False is returned (no work needed).
+    Also extracts and stores image metadata (prompt, workflow, parameters).
     """
     if not Path(file_path).exists():
         return False
@@ -131,6 +165,9 @@ def update_or_create_image_record(file_path):
         size = stat.st_size
         xxh = get_file_xxhash(file_path)
         width, height = get_image_dimensions(file_path)
+
+        # Extract embedded metadata (prompt, workflow, parameters)
+        meta_prompt, meta_workflow, meta_parameters = extract_image_metadata(file_path)
 
         # Generate thumbnail path
         thumbnail_name = f"{xxh}.webp"
@@ -155,38 +192,63 @@ def update_or_create_image_record(file_path):
                         cursor.execute('''
                             UPDATE images SET
                                 xxhash = ?, size = ?, width = ?, height = ?, mtime = ?,
-                                thumbnail_created = ?, thumbnail_path = ?, updated_at = CURRENT_TIMESTAMP
+                                thumbnail_created = ?, thumbnail_path = ?,
+                                metadata_prompt = ?, metadata_workflow = ?, metadata_parameters = ?,
+                                updated_at = CURRENT_TIMESTAMP
                             WHERE file_path = ?
                         ''', (xxh, size, width, height, mtime,
                               1 if thumb_exists_on_disk else 0,
-                              str(thumbnail_path), str(file_path)))
+                              str(thumbnail_path),
+                              meta_prompt, meta_workflow, meta_parameters,
+                              str(file_path)))
                         needs_thumbnail = not thumb_exists_on_disk
                     elif not thumbnail_created and thumb_exists_on_disk:
                         # Thumbnail file exists on disk but DB wasn't marked – fix it
                         cursor.execute('''
-                            UPDATE images SET thumbnail_created = 1, updated_at = CURRENT_TIMESTAMP
+                            UPDATE images SET thumbnail_created = 1,
+                                metadata_prompt = ?, metadata_workflow = ?, metadata_parameters = ?,
+                                updated_at = CURRENT_TIMESTAMP
                             WHERE file_path = ?
-                        ''', (str(file_path),))
+                        ''', (meta_prompt, meta_workflow, meta_parameters, str(file_path)))
                         needs_thumbnail = False
                     elif not thumbnail_created and not thumb_exists_on_disk:
-                        # Record exists but thumbnail is missing
+                        # Record exists but thumbnail is missing – also update metadata
+                        cursor.execute('''
+                            UPDATE images SET
+                                metadata_prompt = ?, metadata_workflow = ?, metadata_parameters = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE file_path = ?
+                        ''', (meta_prompt, meta_workflow, meta_parameters, str(file_path)))
                         needs_thumbnail = True
                     elif thumbnail_created and not thumb_exists_on_disk:
                         # DB says created but file was deleted – regenerate
                         cursor.execute('''
-                            UPDATE images SET thumbnail_created = 0, updated_at = CURRENT_TIMESTAMP
+                            UPDATE images SET thumbnail_created = 0,
+                                metadata_prompt = ?, metadata_workflow = ?, metadata_parameters = ?,
+                                updated_at = CURRENT_TIMESTAMP
                             WHERE file_path = ?
-                        ''', (str(file_path),))
+                        ''', (meta_prompt, meta_workflow, meta_parameters, str(file_path)))
                         needs_thumbnail = True
-                    # else: hash matches AND thumbnail_created == 1 AND file exists – nothing to do
+                    else:
+                        # Hash matches, thumbnail exists – update metadata if missing
+                        cursor.execute('''
+                            UPDATE images SET
+                                metadata_prompt = COALESCE(metadata_prompt, ?),
+                                metadata_workflow = COALESCE(metadata_workflow, ?),
+                                metadata_parameters = COALESCE(metadata_parameters, ?),
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE file_path = ?
+                        ''', (meta_prompt, meta_workflow, meta_parameters, str(file_path)))
                 else:
-                    # Create new record
+                    # Create new record with metadata
                     cursor.execute('''
                         INSERT INTO images (file_path, xxhash, size, width, height, mtime,
-                                            thumbnail_created, thumbnail_path)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                            thumbnail_created, thumbnail_path,
+                                            metadata_prompt, metadata_workflow, metadata_parameters)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (str(file_path), xxh, size, width, height, mtime,
-                          1 if thumb_exists_on_disk else 0, str(thumbnail_path)))
+                          1 if thumb_exists_on_disk else 0, str(thumbnail_path),
+                          meta_prompt, meta_workflow, meta_parameters))
                     needs_thumbnail = not thumb_exists_on_disk
 
                 conn.commit()
@@ -455,7 +517,9 @@ def generate_thumbnails():
                     results["failed"] += 1
 
         # Use a thread pool for parallel thumbnail generation
-        num_workers = min(4, max(1, len(paths) // 10 + 1))
+        # Target ~6 threads for an 8-thread CPU (leave headroom for system)
+        cpu_threads = os.cpu_count() or 4
+        num_workers = max(2, min(cpu_threads - 2, len(paths) // 5 + 1))
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
             executor.map(_process_one, paths)
 
