@@ -171,7 +171,14 @@ def update_or_create_image_record(file_path):
                     elif not thumbnail_created and not thumb_exists_on_disk:
                         # Record exists but thumbnail is missing
                         needs_thumbnail = True
-                    # else: hash matches AND thumbnail_created == 1 – nothing to do
+                    elif thumbnail_created and not thumb_exists_on_disk:
+                        # DB says created but file was deleted – regenerate
+                        cursor.execute('''
+                            UPDATE images SET thumbnail_created = 0, updated_at = CURRENT_TIMESTAMP
+                            WHERE file_path = ?
+                        ''', (str(file_path),))
+                        needs_thumbnail = True
+                    # else: hash matches AND thumbnail_created == 1 AND file exists – nothing to do
                 else:
                     # Create new record
                     cursor.execute('''
@@ -298,7 +305,6 @@ def _thumbnail_worker():
             if not _acquire_generation_mode("on_demand"):
                 # Manual generation is active, re-queue and wait
                 thumbnail_queue.put(file_path)
-                thumbnail_queue.task_done()
                 import time
                 time.sleep(0.5)
                 continue
