@@ -335,6 +335,10 @@ _thumbnail_worker_lock = threading.Lock()
 _generation_mode_lock = threading.Lock()  # guards _generation_mode
 _generation_mode = "idle"  # "idle" | "on_demand" | "manual"
 
+# ── Progress tracking for manual generation ───────────────────────────────────
+_generation_progress_lock = threading.Lock()
+_generation_progress = None  # None when idle, dict when running
+
 
 def _acquire_generation_mode(mode: str) -> bool:
     """Try to set the generation mode. Returns True if acquired."""
@@ -462,102 +466,125 @@ def serve_thumbnail(xxhash):
 
 @app.route("/api/thumbnails/generate", methods=["POST"])
 def generate_thumbnails():
-    """Generate thumbnails for images using multiple threads.
+    """Generate thumbnails for all images asynchronously.
 
+    Starts generation in a background thread and returns immediately.
+    Poll /api/thumbnails/status to track progress.
     Only runs if on-demand generation is not active (mutual exclusion).
     """
-    data = request.get_json() or {}
+    global _generation_progress
+
+    # Check if manual generation is already running
+    with _generation_progress_lock:
+        if _generation_progress is not None and _generation_progress.get("running"):
+            return jsonify({"status": "already_running", "progress": _generation_progress}), 200
 
     # Acquire manual mode – fail fast if on-demand is active
     if not _acquire_generation_mode("manual"):
         return jsonify({"error": "Thumbnail generation is already in progress (on-demand)"}), 409
 
-    try:
-        # Get image paths to process
-        if "paths" in data and data["paths"]:
-            paths = data["paths"]
-        else:
-            paths = _scan_images_full_paths()
+    # Scan all image paths from configured folders
+    paths = _scan_images_full_paths()
 
-        results = {"total": len(paths), "processed": 0, "failed": 0, "cached": 0}
-        results_lock = threading.Lock()
+    # Initialize progress tracking
+    with _generation_progress_lock:
+        _generation_progress = {
+            "running": True,
+            "total": len(paths),
+            "processed": 0,
+            "failed": 0,
+            "cached": 0,
+        }
 
-        def _process_one(file_path):
-            """Process a single image: create record, generate thumbnail, mark done."""
-            try:
-                # Step 1: Create/update the database record & check if thumbnail needed
-                needs_thumbnail = update_or_create_image_record(file_path)
-                if not needs_thumbnail:
-                    # Already has a valid thumbnail on disk and in DB
-                    with results_lock:
-                        results["cached"] += 1
-                    return
+    def _run_generation(paths):
+        """Background thread that generates all thumbnails."""
+        global _generation_progress
+        try:
+            def _process_one(file_path):
+                """Process a single image: create record, generate thumbnail, mark done."""
+                try:
+                    needs_thumbnail = update_or_create_image_record(file_path)
+                    if not needs_thumbnail:
+                        with _generation_progress_lock:
+                            _generation_progress["cached"] += 1
+                        return
 
-                # Step 2: Generate the thumbnail file
-                xxh = get_file_xxhash(file_path)
-                thumb_path = THUMBNAIL_DIR / f"{xxh}.webp"
+                    xxh = get_file_xxhash(file_path)
+                    thumb_path = THUMBNAIL_DIR / f"{xxh}.webp"
 
-                if thumb_path.exists():
-                    # File exists on disk (maybe from a previous partial run)
-                    mark_thumbnail_created(file_path)
-                    with results_lock:
-                        results["cached"] += 1
-                    return
+                    if thumb_path.exists():
+                        mark_thumbnail_created(file_path)
+                        with _generation_progress_lock:
+                            _generation_progress["cached"] += 1
+                        return
 
-                if generate_thumbnail(file_path, thumb_path):
-                    # Step 3: Mark success in the database
-                    mark_thumbnail_created(file_path)
-                    with results_lock:
-                        results["processed"] += 1
-                else:
-                    with results_lock:
-                        results["failed"] += 1
-            except Exception:
-                with results_lock:
-                    results["failed"] += 1
+                    if generate_thumbnail(file_path, thumb_path):
+                        mark_thumbnail_created(file_path)
+                        with _generation_progress_lock:
+                            _generation_progress["processed"] += 1
+                    else:
+                        with _generation_progress_lock:
+                            _generation_progress["failed"] += 1
+                except Exception:
+                    with _generation_progress_lock:
+                        _generation_progress["failed"] += 1
 
-        # Use a thread pool for parallel thumbnail generation
-        # Target ~6 threads for an 8-thread CPU (leave headroom for system)
-        cpu_threads = os.cpu_count() or 4
-        num_workers = max(2, min(cpu_threads - 2, len(paths) // 5 + 1))
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            executor.map(_process_one, paths)
+            # Use a thread pool for parallel thumbnail generation
+            cpu_threads = os.cpu_count() or 4
+            num_workers = max(2, min(cpu_threads - 2, len(paths) // 5 + 1))
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                executor.map(_process_one, paths)
+        finally:
+            _release_generation_mode("manual")
+            with _generation_progress_lock:
+                _generation_progress["running"] = False
 
-    finally:
-        _release_generation_mode("manual")
+    # Start generation in background thread
+    t = threading.Thread(target=_run_generation, args=(paths,), daemon=True, name="manual-generation")
+    t.start()
 
-    return jsonify(results)
+    return jsonify({"status": "started", "total": len(paths)})
 
 
 @app.route("/api/thumbnails/status")
 def thumbnails_status():
-    """Get thumbnail generation status."""
+    """Get thumbnail generation status including live progress.
+
+    Reports the actual number of image files on disk (not just DB records)
+    so the user sees the true total even before generation starts.
+    """
+    # Count actual image files on disk from configured folders
+    disk_total = len(_scan_images_full_paths())
+
     conn = _get_conn()
     cursor = conn.cursor()
-
-    cursor.execute('SELECT COUNT(*) FROM images')
-    total = cursor.fetchone()[0]
 
     cursor.execute('SELECT COUNT(*) FROM images WHERE thumbnail_created = 1')
     created = cursor.fetchone()[0]
 
-    cursor.execute('SELECT COUNT(*) FROM images WHERE thumbnail_created = 0')
-    pending = cursor.fetchone()[0]
+    conn.close()
+
+    pending = max(0, disk_total - created)
 
     # Get total size of thumbnails
     total_size = 0
     for f in THUMBNAIL_DIR.glob("*.webp"):
         total_size += f.stat().st_size
 
-    conn.close()
-
-    return jsonify({
-        "total": total,
+    result = {
+        "total": disk_total,
         "created": created,
         "pending": pending,
         "cache_size_mb": round(total_size / (1024 * 1024), 2),
         "cache_dir": str(CACHE_DIR)
-    })
+    }
+
+    # Include generation progress if running
+    with _generation_progress_lock:
+        if _generation_progress is not None:
+            result["generation"] = dict(_generation_progress)
+
+    return jsonify(result)
 
 
 def _scan_images_full_paths():
@@ -879,7 +906,7 @@ if __name__ == "__main__":
 
     if not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         config = load_config()
-        total_images = len(_scan_images())
+        total_images = len(_scan_images_full_paths())
 
         # Extract folder names from config
         folder_names = []

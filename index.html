@@ -1434,25 +1434,79 @@ const cacheStatusBtn = document.getElementById('cacheStatusBtn');
 const cacheMenu = document.getElementById('cacheMenu');
 const generateThumbnailsBtn = document.getElementById('generateThumbnails');
 
+let _cacheMenuPollInterval = null;
+
 cacheStatusBtn.onclick = (e) => {
     e.stopPropagation();
     cacheMenu.classList.toggle('open');
     folderMenu.classList.remove('open');
-    loadCacheStatus();
+    if (cacheMenu.classList.contains('open')) {
+        loadCacheStatus();
+        // Auto-refresh while popup is open
+        _cacheMenuPollInterval = setInterval(loadCacheStatus, 2000);
+    } else {
+        if (_cacheMenuPollInterval) { clearInterval(_cacheMenuPollInterval); _cacheMenuPollInterval = null; }
+    }
 };
+
+let _statusPollInterval = null;
 
 async function loadCacheStatus() {
     try {
         const res = await fetch('/api/thumbnails/status');
         const data = await res.json();
-        document.getElementById('cacheStats').innerHTML = `
+        let html = `
             <div class="cache-stat"><span class="cache-stat-label">Total images:</span><span class="cache-stat-value">${data.total}</span></div>
             <div class="cache-stat"><span class="cache-stat-label">Thumbnails created:</span><span class="cache-stat-value">${data.created}</span></div>
             <div class="cache-stat"><span class="cache-stat-label">Pending:</span><span class="cache-stat-value">${data.pending}</span></div>
             <div class="cache-stat"><span class="cache-stat-label">Cache size:</span><span class="cache-stat-value">${data.cache_size_mb} MB</span></div>
         `;
+        if (data.generation && data.generation.running) {
+            const g = data.generation;
+            const done = g.processed + g.cached + g.failed;
+            const pct = g.total > 0 ? Math.round((done / g.total) * 100) : 0;
+            html += `
+                <div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+                    <div class="cache-stat"><span class="cache-stat-label">Generating:</span><span class="cache-stat-value">${done} / ${g.total} (${pct}%)</span></div>
+                    <div style="background:var(--bg-secondary);border-radius:4px;height:6px;margin-top:4px;overflow:hidden;">
+                        <div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.3s;"></div>
+                    </div>
+                    <div class="cache-stat" style="margin-top:4px;font-size:0.75rem;color:var(--text-muted);">
+                        <span>${g.processed} new</span> · <span>${g.cached} cached</span>${g.failed > 0 ? ` · <span style="color:#e74c3c">${g.failed} failed</span>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+        document.getElementById('cacheStats').innerHTML = html;
+        return data;
     } catch (e) {
         document.getElementById('cacheStats').innerHTML = '<div style="color:var(--text-muted)">Failed to load cache status</div>';
+        return null;
+    }
+}
+
+function _startStatusPolling() {
+    if (_statusPollInterval) return;
+    _statusPollInterval = setInterval(async () => {
+        const data = await loadCacheStatus();
+        if (data && (!data.generation || !data.generation.running)) {
+            _stopStatusPolling();
+            generateThumbnailsBtn.disabled = false;
+            if (data.generation) {
+                const g = data.generation;
+                generateThumbnailsBtn.textContent = `Done! ${g.processed} generated`;
+                setTimeout(() => { generateThumbnailsBtn.textContent = '🖼️ Generate All Thumbnails'; }, 5000);
+            } else {
+                generateThumbnailsBtn.textContent = '🖼️ Generate All Thumbnails';
+            }
+        }
+    }, 1000);
+}
+
+function _stopStatusPolling() {
+    if (_statusPollInterval) {
+        clearInterval(_statusPollInterval);
+        _statusPollInterval = null;
     }
 }
 
@@ -1462,12 +1516,15 @@ generateThumbnailsBtn.onclick = async () => {
     try {
         const res = await fetch('/api/thumbnails/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         const data = await res.json();
-        generateThumbnailsBtn.textContent = `Done! ${data.processed} generated`;
-        loadCacheStatus();
-        setTimeout(() => { generateThumbnailsBtn.textContent = '\uD83D\uDDBC\uFE0F Generate All Thumbnails'; generateThumbnailsBtn.disabled = false; }, 3000);
+        if (data.status === 'started' || data.status === 'already_running') {
+            _startStatusPolling();
+        } else if (data.error) {
+            generateThumbnailsBtn.textContent = 'Busy - try again';
+            setTimeout(() => { generateThumbnailsBtn.textContent = '🖼️ Generate All Thumbnails'; generateThumbnailsBtn.disabled = false; }, 3000);
+        }
     } catch (e) {
         generateThumbnailsBtn.textContent = 'Failed';
-        setTimeout(() => { generateThumbnailsBtn.textContent = '\uD83D\uDDBC\uFE0F Generate All Thumbnails'; generateThumbnailsBtn.disabled = false; }, 3000);
+        setTimeout(() => { generateThumbnailsBtn.textContent = '🖼️ Generate All Thumbnails'; generateThumbnailsBtn.disabled = false; }, 3000);
     }
 };
 
@@ -1479,6 +1536,7 @@ document.addEventListener('click', (e) => {
     }
     if (!cacheMenu.contains(e.target) && e.target !== cacheStatusBtn) {
         cacheMenu.classList.remove('open');
+        if (_cacheMenuPollInterval) { clearInterval(_cacheMenuPollInterval); _cacheMenuPollInterval = null; }
     }
 });
 
